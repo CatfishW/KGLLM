@@ -40,6 +40,8 @@ def parse_args():
                         help='Path to validation data')
     parser.add_argument('--test_data', type=str, default=None,
                         help='Path to test data')
+    parser.add_argument('--vocab_path', type=str, default=None,
+                        help='Path to pre-built vocabulary (recommended for avoiding UNK tokens)')
     
     # Model arguments
     parser.add_argument('--hidden_dim', type=int, default=256,
@@ -131,6 +133,8 @@ def main():
     print("KG Path Diffusion Model Training")
     print("="*60)
     print(f"Train data: {args.train_data}")
+    print(f"Val data: {args.val_data}")
+    print(f"Vocab path: {args.vocab_path if args.vocab_path else '(will build from train data)'}")
     print(f"Batch size: {args.batch_size}")
     print(f"Hidden dim: {args.hidden_dim}")
     print(f"Precision: {args.precision}")
@@ -142,6 +146,7 @@ def main():
         train_path=args.train_data,
         val_path=args.val_data,
         test_path=args.test_data,
+        vocab_path=args.vocab_path,  # Use pre-built vocabulary if provided
         batch_size=args.batch_size,
         num_workers=args.num_workers,
         max_path_length=args.max_path_length,
@@ -156,10 +161,10 @@ def main():
     
     print(f"Vocabulary: {num_entities} entities, {num_relations} relations")
     
-    # Save vocabulary
-    vocab_path = os.path.join(args.output_dir, 'vocab.json')
-    data_module.vocab.save(vocab_path)
-    print(f"Saved vocabulary to {vocab_path}")
+    # Save vocabulary (useful for inference and debugging)
+    output_vocab_path = os.path.join(args.output_dir, 'vocab.json')
+    data_module.vocab.save(output_vocab_path)
+    print(f"Saved vocabulary to {output_vocab_path}")
     
     # Create model
     print("\nCreating model...")

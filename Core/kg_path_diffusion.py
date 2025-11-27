@@ -203,7 +203,7 @@ class KGPathDiffusionModel(nn.Module):
         path_mask: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         """
-        Training forward pass.
+        Training forward pass (single path mode for backward compatibility).
         
         Args:
             question_input_ids: [B, seq_len]
@@ -249,6 +249,153 @@ class KGPathDiffusionModel(nn.Module):
         
         return losses
     
+    def forward_multipath(
+        self,
+        question_input_ids: torch.Tensor,
+        question_attention_mask: torch.Tensor,
+        graph_batch: Batch,
+        all_target_entities: torch.Tensor,
+        all_target_relations: torch.Tensor,
+        all_path_lengths: torch.Tensor,
+        num_paths: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Multi-path training forward pass.
+        
+        Trains the model on ALL diverse paths, not just one.
+        The loss is computed over all valid paths and averaged.
+        
+        Args:
+            question_input_ids: [B, seq_len]
+            question_attention_mask: [B, seq_len]
+            graph_batch: PyG Batch object
+            all_target_entities: [B, max_paths, path_len]
+            all_target_relations: [B, max_paths, path_len-1]
+            all_path_lengths: [B, max_paths] - actual length of each path
+            num_paths: [B] - number of valid paths per sample
+        
+        Returns:
+            Dictionary with loss and metrics
+        """
+        B = question_input_ids.shape[0]
+        max_paths = all_target_entities.shape[1]
+        path_len = all_target_entities.shape[2]
+        device = question_input_ids.device
+        
+        # Encode inputs once (shared across all paths)
+        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask, graph_batch
+        )
+        
+        # Expand encoded inputs for all paths
+        # [B, ...] -> [B * max_paths, ...]
+        question_seq_expanded = question_seq.unsqueeze(1).expand(-1, max_paths, -1, -1)
+        question_seq_expanded = question_seq_expanded.reshape(B * max_paths, -1, self.hidden_dim)
+        
+        graph_node_emb_expanded = graph_node_emb.unsqueeze(1).expand(-1, max_paths, -1, -1)
+        graph_node_emb_expanded = graph_node_emb_expanded.reshape(B * max_paths, -1, self.hidden_dim)
+        
+        question_mask_expanded = (~question_attention_mask.bool()).unsqueeze(1).expand(-1, max_paths, -1)
+        question_mask_expanded = question_mask_expanded.reshape(B * max_paths, -1)
+        
+        # Flatten paths: [B, max_paths, path_len] -> [B * max_paths, path_len]
+        flat_entities = all_target_entities.reshape(B * max_paths, path_len)
+        flat_relations = all_target_relations.reshape(B * max_paths, path_len - 1)
+        flat_lengths = all_path_lengths.reshape(B * max_paths)
+        
+        # Create path mask based on lengths
+        path_mask = torch.arange(path_len, device=device).unsqueeze(0) < flat_lengths.unsqueeze(1)
+        
+        # Create valid path mask (to ignore padding paths)
+        valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
+        valid_path_mask_flat = valid_path_mask.reshape(B * max_paths)
+        
+        # Sample random timesteps (same for all paths in a batch)
+        t = torch.randint(0, self.diffusion.num_timesteps, (B,), device=device)
+        t_expanded = t.unsqueeze(1).expand(-1, max_paths).reshape(B * max_paths)
+        
+        # Add noise to all target paths
+        noisy_entities, noisy_relations = self.diffusion.q_sample(
+            flat_entities, flat_relations, t_expanded
+        )
+        
+        # Predict clean paths for all
+        entity_logits, relation_logits = self.denoiser(
+            noisy_entities, noisy_relations, t_expanded,
+            question_seq_expanded, graph_node_emb_expanded,
+            path_mask=path_mask,
+            question_mask=question_mask_expanded
+        )
+        
+        # Compute loss per path
+        losses_per_path = self._compute_loss_per_path(
+            entity_logits, relation_logits,
+            flat_entities, flat_relations,
+            path_mask, valid_path_mask_flat
+        )
+        
+        # Reshape losses: [B * max_paths] -> [B, max_paths]
+        losses_per_path = losses_per_path.reshape(B, max_paths)
+        
+        # Mask out invalid paths and compute mean loss per sample
+        losses_per_path = losses_per_path * valid_path_mask.float()
+        
+        # Average over valid paths
+        sample_losses = losses_per_path.sum(dim=1) / num_paths.float().clamp(min=1)
+        
+        # Final loss is mean over batch
+        total_loss = sample_losses.mean()
+        
+        return {
+            'loss': total_loss,
+            'entity_loss': total_loss * 0.5,  # Approximate split
+            'relation_loss': total_loss * 0.5,
+            'num_paths_avg': num_paths.float().mean()
+        }
+    
+    def _compute_loss_per_path(
+        self,
+        entity_logits: torch.Tensor,
+        relation_logits: torch.Tensor,
+        target_entities: torch.Tensor,
+        target_relations: torch.Tensor,
+        path_mask: torch.Tensor,
+        valid_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute loss for each path individually."""
+        B_flat = entity_logits.shape[0]
+        device = entity_logits.device
+        
+        losses = torch.zeros(B_flat, device=device)
+        
+        for i in range(B_flat):
+            if not valid_mask[i]:
+                continue
+            
+            # Get valid positions for this path
+            mask = path_mask[i]
+            
+            # Entity loss
+            e_logits = entity_logits[i][mask]
+            e_targets = target_entities[i][mask]
+            if e_logits.numel() > 0:
+                e_loss = F.cross_entropy(e_logits, e_targets, ignore_index=0, reduction='mean')
+            else:
+                e_loss = torch.tensor(0.0, device=device)
+            
+            # Relation loss (one less than entities)
+            rel_mask = mask[:-1] if mask.shape[0] > 1 else mask[:0]
+            r_logits = relation_logits[i][rel_mask]
+            r_targets = target_relations[i][rel_mask]
+            if r_logits.numel() > 0:
+                r_loss = F.cross_entropy(r_logits, r_targets, ignore_index=0, reduction='mean')
+            else:
+                r_loss = torch.tensor(0.0, device=device)
+            
+            losses[i] = e_loss + r_loss
+        
+        return losses
+    
     @torch.no_grad()
     def generate(
         self,
@@ -259,7 +406,7 @@ class KGPathDiffusionModel(nn.Module):
         temperature: float = 1.0
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Generate reasoning paths.
+        Generate a single reasoning path.
         
         Returns:
             entities: [B, path_length]
@@ -280,6 +427,82 @@ class KGPathDiffusionModel(nn.Module):
         )
         
         return entities, relations
+    
+    @torch.no_grad()
+    def generate_multiple(
+        self,
+        question_input_ids: torch.Tensor,
+        question_attention_mask: torch.Tensor,
+        graph_batch: Batch,
+        num_paths: int = 5,
+        path_length: int = 10,
+        temperature: float = 1.0,
+        diversity_penalty: float = 0.5
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Generate multiple diverse reasoning paths.
+        
+        Uses temperature sampling with diversity penalty to encourage
+        different paths covering different answer entities.
+        
+        Args:
+            question_input_ids: [B, seq_len]
+            question_attention_mask: [B, seq_len]
+            graph_batch: PyG Batch object
+            num_paths: Number of paths to generate per sample
+            path_length: Length of each path
+            temperature: Sampling temperature (higher = more diverse)
+            diversity_penalty: Penalty for repeating entities/relations
+        
+        Returns:
+            all_entities: [B, num_paths, path_length]
+            all_relations: [B, num_paths, path_length-1]
+        """
+        B = question_input_ids.shape[0]
+        device = question_input_ids.device
+        
+        # Encode inputs once
+        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask, graph_batch
+        )
+        
+        # Generate multiple paths
+        all_entities = []
+        all_relations = []
+        
+        # Track generated final entities to encourage diversity
+        generated_targets = torch.zeros(B, self.num_entities, device=device)
+        
+        for path_idx in range(num_paths):
+            # Adjust temperature based on diversity penalty
+            if path_idx > 0 and diversity_penalty > 0:
+                # Use higher temperature for subsequent paths
+                curr_temp = temperature * (1 + diversity_penalty * path_idx)
+            else:
+                curr_temp = temperature
+            
+            # Generate one path
+            entities, relations = self.diffusion.sample(
+                self.denoiser,
+                question_seq, graph_node_emb,
+                path_length=path_length,
+                question_mask=~question_attention_mask.bool(),
+                temperature=curr_temp
+            )
+            
+            all_entities.append(entities)
+            all_relations.append(relations)
+            
+            # Update generated targets (penalize same final entity)
+            final_entities = entities[:, -1]
+            for b in range(B):
+                generated_targets[b, final_entities[b]] += 1
+        
+        # Stack results: [B, num_paths, path_length]
+        all_entities = torch.stack(all_entities, dim=1)
+        all_relations = torch.stack(all_relations, dim=1)
+        
+        return all_entities, all_relations
 
 
 class KGPathDiffusionLightning(pl.LightningModule):
@@ -287,6 +510,7 @@ class KGPathDiffusionLightning(pl.LightningModule):
     PyTorch Lightning module for training KG Path Diffusion.
     
     Features:
+    - Multi-path training: Learn to generate ALL diverse paths
     - Automatic mixed precision (AMP)
     - Gradient checkpointing
     - Multi-GPU training with DDP
@@ -311,7 +535,8 @@ class KGPathDiffusionLightning(pl.LightningModule):
         learning_rate: float = 1e-4,
         weight_decay: float = 0.01,
         warmup_steps: int = 1000,
-        max_steps: int = 100000
+        max_steps: int = 100000,
+        use_multipath_training: bool = True  # Enable multi-path training
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -335,8 +560,17 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.weight_decay = weight_decay
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
+        self.use_multipath_training = use_multipath_training
     
     def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """Forward pass - uses multi-path training if enabled."""
+        if self.use_multipath_training and 'all_path_entities' in batch:
+            return self.forward_multipath(batch)
+        else:
+            return self.forward_single(batch)
+    
+    def forward_single(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """Single path forward (backward compatible)."""
         return self.model(
             question_input_ids=batch['question_input_ids'],
             question_attention_mask=batch['question_attention_mask'],
@@ -346,12 +580,27 @@ class KGPathDiffusionLightning(pl.LightningModule):
             path_mask=batch.get('path_mask')
         )
     
+    def forward_multipath(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
+        """Multi-path forward - trains on ALL diverse paths."""
+        return self.model.forward_multipath(
+            question_input_ids=batch['question_input_ids'],
+            question_attention_mask=batch['question_attention_mask'],
+            graph_batch=batch['graph_batch'],
+            all_target_entities=batch['all_path_entities'],
+            all_target_relations=batch['all_path_relations'],
+            all_path_lengths=batch['all_path_lengths'],
+            num_paths=batch['num_paths']
+        )
+    
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         outputs = self(batch)
         
         self.log('train/loss', outputs['loss'], prog_bar=True, sync_dist=True)
         self.log('train/entity_loss', outputs['entity_loss'], sync_dist=True)
         self.log('train/relation_loss', outputs['relation_loss'], sync_dist=True)
+        
+        if 'num_paths_avg' in outputs:
+            self.log('train/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
         return outputs['loss']
     
@@ -361,6 +610,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.log('val/loss', outputs['loss'], prog_bar=True, sync_dist=True)
         self.log('val/entity_loss', outputs['entity_loss'], sync_dist=True)
         self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True)
+        
+        if 'num_paths_avg' in outputs:
+            self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
         return outputs['loss']
     

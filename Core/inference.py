@@ -115,9 +115,24 @@ def generate_paths(
     device: str = 'cuda',
     path_length: int = 10,
     temperature: float = 1.0,
-    num_samples: int = 1
+    num_samples: int = 1,
+    generate_multiple: bool = False,
+    num_paths_per_sample: int = 5
 ) -> List[Dict[str, Any]]:
-    """Generate paths for all samples in dataloader."""
+    """Generate paths for all samples in dataloader.
+    
+    Args:
+        model: The trained model
+        dataloader: DataLoader for input data
+        vocab: Vocabulary for decoding
+        raw_data: Raw data dict for getting original info
+        device: Device to run on
+        path_length: Length of paths to generate
+        temperature: Sampling temperature
+        num_samples: Number of independent generation runs (legacy)
+        generate_multiple: If True, use generate_multiple to get diverse paths
+        num_paths_per_sample: Number of diverse paths to generate per sample
+    """
     results = []
     
     for batch in tqdm(dataloader, desc="Generating paths"):
@@ -128,12 +143,13 @@ def generate_paths(
         
         batch_size = batch['question_input_ids'].shape[0]
         
-        # Generate multiple samples if requested
-        for sample_idx in range(num_samples):
-            entities, relations = model.model.generate(
+        if generate_multiple:
+            # Generate multiple diverse paths at once
+            all_entities, all_relations = model.model.generate_multiple(
                 batch['question_input_ids'],
                 batch['question_attention_mask'],
                 batch['graph_batch'],
+                num_paths=num_paths_per_sample,
                 path_length=path_length,
                 temperature=temperature
             )
@@ -141,22 +157,38 @@ def generate_paths(
             # Decode each sample in batch
             for i in range(batch_size):
                 sample_id = batch['ids'][i]
-                decoded = decode_path(entities[i], relations[i], vocab)
-                
-                # Get original data for this sample
                 original = raw_data.get(sample_id, {})
+                
+                # Decode all generated paths
+                generated_paths = []
+                for path_idx in range(num_paths_per_sample):
+                    decoded = decode_path(
+                        all_entities[i, path_idx], 
+                        all_relations[i, path_idx], 
+                        vocab
+                    )
+                    generated_paths.append(decoded)
                 
                 result = {
                     "id": sample_id,
-                    "sample_idx": sample_idx,
                     "question": original.get('question', ''),
                     "answer": original.get('answer', ''),
                     "q_entity": original.get('q_entity', []),
                     "a_entity": original.get('a_entity', []),
-                    "generated_path": decoded['path_string'],
-                    "generated_entities": decoded['entities'],
-                    "generated_relations": decoded['relations'],
-                    "generated_relation_chain": decoded['relation_chain'],
+                    "generated_paths": [
+                        {
+                            "path_string": p['path_string'],
+                            "entities": p['entities'],
+                            "relations": p['relations'],
+                            "relation_chain": p['relation_chain']
+                        }
+                        for p in generated_paths
+                    ],
+                    # First path for backward compatibility
+                    "generated_path": generated_paths[0]['path_string'],
+                    "generated_entities": generated_paths[0]['entities'],
+                    "generated_relations": generated_paths[0]['relations'],
+                    "generated_relation_chain": generated_paths[0]['relation_chain'],
                 }
                 
                 # Add ground truth paths if available
@@ -169,10 +201,56 @@ def generate_paths(
                             'entities': p.get('entities', []),
                             'relations': p.get('relations', [])
                         }
-                        for p in gt_paths[:3]  # Limit to first 3 ground truth paths
+                        for p in gt_paths[:10]  # Show more ground truth paths
                     ]
                 
                 results.append(result)
+        else:
+            # Legacy: generate single paths multiple times
+            for sample_idx in range(num_samples):
+                entities, relations = model.model.generate(
+                    batch['question_input_ids'],
+                    batch['question_attention_mask'],
+                    batch['graph_batch'],
+                    path_length=path_length,
+                    temperature=temperature
+                )
+                
+                # Decode each sample in batch
+                for i in range(batch_size):
+                    sample_id = batch['ids'][i]
+                    decoded = decode_path(entities[i], relations[i], vocab)
+                    
+                    # Get original data for this sample
+                    original = raw_data.get(sample_id, {})
+                    
+                    result = {
+                        "id": sample_id,
+                        "sample_idx": sample_idx,
+                        "question": original.get('question', ''),
+                        "answer": original.get('answer', ''),
+                        "q_entity": original.get('q_entity', []),
+                        "a_entity": original.get('a_entity', []),
+                        "generated_path": decoded['path_string'],
+                        "generated_entities": decoded['entities'],
+                        "generated_relations": decoded['relations'],
+                        "generated_relation_chain": decoded['relation_chain'],
+                    }
+                    
+                    # Add ground truth paths if available
+                    gt_paths = original.get('paths', [])
+                    if gt_paths:
+                        result['ground_truth_paths'] = [
+                            {
+                                'path_string': p.get('full_path', ''),
+                                'relation_chain': p.get('relation_chain', ''),
+                                'entities': p.get('entities', []),
+                                'relations': p.get('relations', [])
+                            }
+                            for p in gt_paths[:3]
+                        ]
+                    
+                    results.append(result)
     
     return results
 
@@ -277,7 +355,11 @@ Examples:
     parser.add_argument('--temperature', type=float, default=1.0,
                         help='Sampling temperature (0 for greedy, >1 for more random)')
     parser.add_argument('--num_samples', type=int, default=1,
-                        help='Number of path samples per question')
+                        help='Number of path samples per question (legacy mode)')
+    parser.add_argument('--multipath', action='store_true',
+                        help='Enable multi-path generation (generates diverse paths)')
+    parser.add_argument('--num_paths', type=int, default=5,
+                        help='Number of diverse paths to generate per question (with --multipath)')
     
     # Hardware
     parser.add_argument('--device', type=str, default='cuda',
@@ -360,13 +442,19 @@ Examples:
     )
     
     # Generate paths
-    print(f"\nGenerating paths...")
+    if args.multipath:
+        print(f"\nGenerating {args.num_paths} diverse paths per sample...")
+    else:
+        print(f"\nGenerating paths...")
+    
     results = generate_paths(
         model, dataloader, vocab, raw_data,
         device=args.device,
         path_length=args.path_length,
         temperature=args.temperature,
-        num_samples=args.num_samples
+        num_samples=args.num_samples,
+        generate_multiple=args.multipath,
+        num_paths_per_sample=args.num_paths
     )
     
     # Save results
@@ -401,13 +489,20 @@ Examples:
             print(f"Answer: {result.get('answer', 'N/A')}")
             print(f"Q Entity: {result.get('q_entity', 'N/A')}")
             print(f"A Entity: {result.get('a_entity', 'N/A')}")
-            print(f"\nGenerated Path: {result.get('generated_path', 'N/A')}")
-            print(f"Generated Relations: {result.get('generated_relation_chain', 'N/A')}")
+            
+            # Show all generated paths if multipath mode
+            if 'generated_paths' in result:
+                print(f"\nGenerated Paths ({len(result['generated_paths'])}):")
+                for j, gp in enumerate(result['generated_paths'][:5]):
+                    print(f"  [{j+1}] {gp.get('path_string', 'N/A')}")
+            else:
+                print(f"\nGenerated Path: {result.get('generated_path', 'N/A')}")
+                print(f"Generated Relations: {result.get('generated_relation_chain', 'N/A')}")
             
             gt_paths = result.get('ground_truth_paths', [])
             if gt_paths:
                 print(f"\nGround Truth Paths ({len(gt_paths)}):")
-                for j, gt in enumerate(gt_paths[:2]):
+                for j, gt in enumerate(gt_paths[:3]):
                     print(f"  [{j+1}] {gt.get('path_string', 'N/A')}")
             
             print("-" * 50)

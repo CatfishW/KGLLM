@@ -28,16 +28,17 @@ if errorlevel 1 (
 
 REM Run training with recommended settings
 python train.py ^
-    --train_data ../Data/webqsp_combined/train_combined.parquet ^
-    --val_data ../Data/webqsp_combined/val.jsonl ^
+    --train_data ../Data/webqsp_final/train.parquet ^
+    --val_data ../Data/webqsp_final/val.parquet ^
+    --vocab_path ../Data/webqsp_final/vocab.json ^
     --batch_size 4 ^
     --hidden_dim 128 ^
-    --num_graph_layers 2 ^
-    --num_diffusion_layers 2 ^
-    --num_diffusion_steps 100 ^
+    --num_graph_layers 1 ^
+    --num_diffusion_layers 1 ^
+    --num_diffusion_steps 25 ^
     --max_path_length 20 ^
     --gpus 1 ^
-    --output_dir outputs ^
+    --output_dir outputs_multipath ^
     --max_epochs 50
 
 echo.

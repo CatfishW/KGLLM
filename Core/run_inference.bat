@@ -12,7 +12,7 @@ REM Default values
 set CONDA_ENV=%1
 set CKPT_DIR=%2
 if "%CONDA_ENV%"=="" set CONDA_ENV=Wu
-if "%CKPT_DIR%"=="" set CKPT_DIR=outputs_1
+if "%CKPT_DIR%"=="" set CKPT_DIR=outputs_improved
 
 echo ============================================================
 echo KG Path Diffusion Model - Inference
