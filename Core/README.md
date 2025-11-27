@@ -28,6 +28,38 @@ Noisy Path ──► [Path Transformer with AdaLN] ─────────�
 - 📊 **Efficient Data Loading**: PyTorch Geometric batching, parallel workers
 - 🎯 **Configurable**: Easy command-line configuration
 - 📈 **Logging**: TensorBoard and Weights & Biases support
+- 🔀 **Path Augmentation**: Random path sampling during training for better coverage
+
+## Quick Start
+
+### Windows
+
+```batch
+# Training
+run_train.bat Wu
+
+# Inference
+run_inference.bat Wu outputs_1
+
+# Quick test (10 samples)
+run_quick_test.bat Wu
+```
+
+### Linux/Mac
+
+```bash
+# Make scripts executable
+chmod +x run_train.sh run_inference.sh run_quick_test.sh
+
+# Training
+./run_train.sh Wu
+
+# Inference
+./run_inference.sh Wu outputs_1
+
+# Quick test (10 samples)
+./run_quick_test.sh Wu
+```
 
 ## Installation
 
@@ -39,7 +71,7 @@ For PyTorch Geometric, follow the [official installation guide](https://pytorch-
 
 ## Data Format
 
-The model expects data in the webqsp_rog format:
+The model expects data in JSONL format with the following structure:
 
 ```json
 {
@@ -50,8 +82,7 @@ The model expects data in the webqsp_rog format:
     "a_entity": ["Jaxon Bieber"],
     "graph": [
         ["Justin Bieber", "people.person.parents", "Jeremy Bieber"],
-        ["Jeremy Bieber", "people.person.children", "Jaxon Bieber"],
-        ...
+        ["Jeremy Bieber", "people.person.children", "Jaxon Bieber"]
     ],
     "paths": [
         {
@@ -66,24 +97,40 @@ The model expects data in the webqsp_rog format:
 
 ## Training
 
-### Single GPU
+### Using Scripts (Recommended)
+
+**Windows:**
+```batch
+run_train.bat Wu
+```
+
+**Linux/Mac:**
+```bash
+./run_train.sh Wu
+```
+
+### Manual Command
 
 ```bash
 python train.py \
-    --train_data ../Data/webqsp_rog/train-00000-of-00002.parquet \
-    --val_data ../Data/webqsp_rog/validation-00000-of-00001.parquet \
-    --batch_size 32 \
-    --hidden_dim 256 \
-    --num_diffusion_steps 1000 \
-    --learning_rate 1e-4 \
-    --max_epochs 100
+    --train_data ../Data/webqsp_combined/train_combined.parquet \
+    --val_data ../Data/webqsp_combined/val.jsonl \
+    --batch_size 4 \
+    --hidden_dim 128 \
+    --num_graph_layers 2 \
+    --num_diffusion_layers 2 \
+    --num_diffusion_steps 100 \
+    --max_path_length 20 \
+    --gpus 1 \
+    --output_dir outputs \
+    --max_epochs 50
 ```
 
 ### Multi-GPU (DDP)
 
 ```bash
 python train.py \
-    --train_data ../Data/webqsp_rog/train-00000-of-00002.parquet \
+    --train_data ../Data/webqsp_combined/train_combined.parquet \
     --gpus -1 \
     --strategy ddp \
     --batch_size 32 \
@@ -95,7 +142,7 @@ python train.py \
 
 ```bash
 python train.py \
-    --train_data ../Data/webqsp_rog/train-00000-of-00002.parquet \
+    --train_data ../Data/webqsp_combined/train_combined.parquet \
     --wandb \
     --wandb_project kg-path-diffusion \
     --experiment_name exp1
@@ -103,15 +150,44 @@ python train.py \
 
 ## Inference
 
+### Using Scripts (Recommended)
+
+**Windows:**
+```batch
+run_inference.bat Wu outputs_1
+```
+
+**Linux/Mac:**
+```bash
+./run_inference.sh Wu outputs_1
+```
+
+### Manual Command
+
 ```bash
 python inference.py \
-    --checkpoint outputs/checkpoints/best.ckpt \
-    --vocab outputs/vocab.json \
-    --data ../Data/webqsp_rog/test.parquet \
-    --output predictions.jsonl \
+    --checkpoint outputs_1/checkpoints/last.ckpt \
+    --vocab outputs_1/vocab.json \
+    --data ../Data/webqsp_combined/val.jsonl \
+    --output inference_results.jsonl \
+    --batch_size 8 \
     --path_length 10 \
-    --temperature 1.0
+    --temperature 0.7 \
+    --show_examples 10
 ```
+
+### Inference Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `--checkpoint` | required | Path to model checkpoint |
+| `--vocab` | required | Path to vocabulary file |
+| `--data` | required | Path to input data (jsonl/parquet) |
+| `--output` | `inference_results.jsonl` | Output file path |
+| `--path_length` | 10 | Maximum generated path length |
+| `--temperature` | 1.0 | Sampling temperature (0=greedy, >1=more random) |
+| `--num_samples` | 1 | Number of paths to generate per question |
+| `--max_samples` | None | Limit number of samples to process |
 
 ## Model Configuration
 
@@ -130,7 +206,45 @@ python inference.py \
 1. **Use mixed precision**: `--precision 16-mixed` for ~2x speedup
 2. **Increase batch size**: Use gradient accumulation if GPU memory is limited
 3. **Freeze question encoder**: `--freeze_question_encoder` to reduce trainable parameters
-4. **Adjust diffusion steps**: Fewer steps (100-500) for faster training, more (1000) for better quality
+4. **Adjust diffusion steps**: Fewer steps (50-100) for faster training, more (500-1000) for better quality
+5. **Lower temperature**: Use `--temperature 0.5-0.8` for more focused path generation
+
+## Output Format
+
+Inference results are saved in JSONL format:
+
+```json
+{
+    "id": "WebQTrn-2415",
+    "question": "what sports are played in canada",
+    "answer": ["..."],
+    "generated_path": "(Canada) --[sports.sports_team.location]--> (Canada Davis Cup team)",
+    "generated_entities": ["Canada", "Canada Davis Cup team"],
+    "generated_relations": ["sports.sports_team.location"],
+    "generated_relation_chain": "sports.sports_team.location",
+    "ground_truth_paths": [...]
+}
+```
+
+## Project Structure
+
+```
+Core/
+├── train.py              # Training script
+├── inference.py          # Inference script
+├── kg_path_diffusion.py  # Main model
+├── run_train.bat/.sh     # Easy training scripts
+├── run_inference.bat/.sh # Easy inference scripts
+├── run_quick_test.bat/.sh # Quick test scripts
+├── data/
+│   └── dataset.py        # Dataset and data loading
+├── modules/
+│   ├── diffusion.py      # Discrete diffusion module
+│   └── graph_encoder.py  # Graph encoding modules
+└── outputs_1/            # Training outputs
+    ├── checkpoints/      # Model checkpoints
+    └── vocab.json        # Vocabulary file
+```
 
 ## Citation
 
@@ -146,4 +260,3 @@ If you use this code, please cite:
 ## License
 
 MIT License
-
