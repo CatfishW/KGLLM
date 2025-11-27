@@ -280,6 +280,7 @@ class KGPathDiffusionModel(nn.Module):
         B = question_input_ids.shape[0]
         max_paths = all_target_entities.shape[1]
         path_len = all_target_entities.shape[2]
+        rel_len = all_target_relations.shape[2]  # Use actual relation length (may differ from path_len - 1)
         device = question_input_ids.device
         
         # Encode inputs once (shared across all paths)
@@ -300,11 +301,16 @@ class KGPathDiffusionModel(nn.Module):
         
         # Flatten paths: [B, max_paths, path_len] -> [B * max_paths, path_len]
         flat_entities = all_target_entities.reshape(B * max_paths, path_len)
-        flat_relations = all_target_relations.reshape(B * max_paths, path_len - 1)
+        flat_relations = all_target_relations.reshape(B * max_paths, rel_len)
         flat_lengths = all_path_lengths.reshape(B * max_paths)
         
-        # Create path mask based on lengths
+        # Create path mask based on lengths (for entities)
         path_mask = torch.arange(path_len, device=device).unsqueeze(0) < flat_lengths.unsqueeze(1)
+        
+        # Create relation mask (relations are one less than entities, but respect rel_len)
+        # For a path of length L, there are L-1 relations
+        rel_lengths = (flat_lengths - 1).clamp(min=0)  # Ensure non-negative
+        relation_mask = torch.arange(rel_len, device=device).unsqueeze(0) < rel_lengths.unsqueeze(1)
         
         # Create valid path mask (to ignore padding paths)
         valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
@@ -331,7 +337,7 @@ class KGPathDiffusionModel(nn.Module):
         losses_per_path = self._compute_loss_per_path(
             entity_logits, relation_logits,
             flat_entities, flat_relations,
-            path_mask, valid_path_mask_flat
+            path_mask, relation_mask, valid_path_mask_flat
         )
         
         # Reshape losses: [B * max_paths] -> [B, max_paths]
@@ -360,6 +366,7 @@ class KGPathDiffusionModel(nn.Module):
         target_entities: torch.Tensor,
         target_relations: torch.Tensor,
         path_mask: torch.Tensor,
+        relation_mask: torch.Tensor,
         valid_mask: torch.Tensor
     ) -> torch.Tensor:
         """Compute loss for each path individually."""
@@ -373,20 +380,20 @@ class KGPathDiffusionModel(nn.Module):
                 continue
             
             # Get valid positions for this path
-            mask = path_mask[i]
+            e_mask = path_mask[i]
+            r_mask = relation_mask[i]
             
             # Entity loss
-            e_logits = entity_logits[i][mask]
-            e_targets = target_entities[i][mask]
+            e_logits = entity_logits[i][e_mask]
+            e_targets = target_entities[i][e_mask]
             if e_logits.numel() > 0:
                 e_loss = F.cross_entropy(e_logits, e_targets, ignore_index=0, reduction='mean')
             else:
                 e_loss = torch.tensor(0.0, device=device)
             
-            # Relation loss (one less than entities)
-            rel_mask = mask[:-1] if mask.shape[0] > 1 else mask[:0]
-            r_logits = relation_logits[i][rel_mask]
-            r_targets = target_relations[i][rel_mask]
+            # Relation loss (use relation_mask directly)
+            r_logits = relation_logits[i][r_mask]
+            r_targets = target_relations[i][r_mask]
             if r_logits.numel() > 0:
                 r_loss = F.cross_entropy(r_logits, r_targets, ignore_index=0, reduction='mean')
             else:

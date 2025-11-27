@@ -31,14 +31,14 @@ python train.py ^
     --train_data ../Data/webqsp_final/train.parquet ^
     --val_data ../Data/webqsp_final/val.parquet ^
     --vocab_path ../Data/webqsp_final/vocab.json ^
-    --batch_size 4 ^
-    --hidden_dim 128 ^
+    --batch_size 2 ^
+    --hidden_dim 64 ^
     --num_graph_layers 1 ^
     --num_diffusion_layers 1 ^
-    --num_diffusion_steps 25 ^
-    --max_path_length 20 ^
+    --num_diffusion_steps 8 ^
+    --max_path_length 12 ^
     --gpus 1 ^
-    --output_dir outputs_multipath ^
+    --output_dir outputs_multipath_small ^
     --max_epochs 50
 
 echo.
