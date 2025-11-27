@@ -115,8 +115,6 @@ logs/
 *.pkl
 *.pickle
 
-# Data directory
-Data/
 
 # OS generated files
 .DS_Store

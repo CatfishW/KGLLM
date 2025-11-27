@@ -8,7 +8,7 @@ Features:
 - Checkpointing and logging
 - Easy configuration via command line or config file
 """
-# python train.py --train_data ../Data/webqsp_combined/train_combined.parquet --val_data ../Data/webqsp_combined/val.jsonl --batch_size 4 --hidden_dim 128 --num_graph_layers 2 --num_diffusion_layers 2 --num_diffusion_steps 100 --max_path_length 10 --gpus 1 --output_dir outputs_debug
+# python train.py --train_data ../Data/webqsp_combined/train_combined.parquet --val_data ../Data/webqsp_combined/val.jsonl --batch_size 4 --hidden_dim 128 --num_graph_layers 2 --num_diffusion_layers 2 --num_diffusion_steps 100 --max_path_length 20 --gpus 1 --output_dir outputs_1
 import os
 import sys
 import argparse
