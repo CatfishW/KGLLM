@@ -10,6 +10,7 @@ import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 from dataclasses import dataclass
 import json
+import random
 from pathlib import Path
 from torch_geometric.data import Data, Batch
 from transformers import AutoTokenizer
@@ -106,6 +107,9 @@ class KGPathDataset(Dataset):
     
     Input: Question + KG subgraph
     Output: Full reasoning path (sequence of entities and relations)
+    
+    During training, randomly samples from ALL available paths for each sample.
+    During validation/inference, uses the first path for consistent evaluation.
     """
     
     def __init__(
@@ -118,7 +122,8 @@ class KGPathDataset(Dataset):
         max_graph_nodes: int = 200,
         max_entities: int = 50000,
         max_relations: int = 5000,
-        build_vocab: bool = False
+        build_vocab: bool = False,
+        training: bool = True  # If True, randomly sample paths; if False, use first path
     ):
         self.data_path = Path(data_path)
         self.max_question_length = max_question_length
@@ -126,6 +131,7 @@ class KGPathDataset(Dataset):
         self.max_graph_nodes = max_graph_nodes
         self.max_entities = max_entities
         self.max_relations = max_relations
+        self.training = training  # Whether to randomly sample paths
         
         # Load tokenizer for questions
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -310,10 +316,18 @@ class KGPathDataset(Dataset):
         q_local_indices = [entity_to_local_idx.get(str(e), 0) for e in q_entities]
         a_local_indices = [entity_to_local_idx.get(str(e), 0) for e in a_entities]
         
-        # Encode target paths (use first path as target for training)
+        # Encode target paths
+        # During training: randomly sample from all available paths
+        # During validation/inference: use first path for consistent evaluation
         paths = sample.get('paths', [])
         if paths and isinstance(paths[0], dict):
-            target_path = self._encode_path(paths[0], entity_to_local_idx)
+            if self.training and len(paths) > 1:
+                # Randomly sample a path during training
+                selected_path = random.choice(paths)
+            else:
+                # Use first path for validation/inference
+                selected_path = paths[0]
+            target_path = self._encode_path(selected_path, entity_to_local_idx)
         else:
             # Empty path
             target_path = {
@@ -466,6 +480,7 @@ class KGPathDataModule(pl.LightningDataModule):
         """Setup datasets and build vocabulary."""
         if stage == 'fit' or stage is None:
             # Build vocabulary from training data
+            # training=True: randomly sample from all paths for data augmentation
             self.train_dataset = KGPathDataset(
                 self.train_path,
                 vocab=None,
@@ -475,11 +490,13 @@ class KGPathDataModule(pl.LightningDataModule):
                 max_graph_nodes=self.max_graph_nodes,
                 max_entities=self.max_entities,
                 max_relations=self.max_relations,
-                build_vocab=True
+                build_vocab=True,
+                training=True  # Randomly sample paths during training
             )
             self.vocab = self.train_dataset.vocab
             
             if self.val_path:
+                # training=False: use first path for consistent evaluation
                 self.val_dataset = KGPathDataset(
                     self.val_path,
                     vocab=self.vocab,
@@ -489,7 +506,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_graph_nodes=self.max_graph_nodes,
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
-                    build_vocab=False
+                    build_vocab=False,
+                    training=False  # Use first path for consistent evaluation
                 )
         
         if stage == 'test' or stage is None:
@@ -503,7 +521,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_graph_nodes=self.max_graph_nodes,
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
-                    build_vocab=False
+                    build_vocab=False,
+                    training=False  # Use first path for consistent evaluation
                 )
     
     def train_dataloader(self):
