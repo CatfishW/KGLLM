@@ -83,16 +83,16 @@ class EntityRelationVocab:
         return len(self.relation2idx)
     
     def save(self, path: str):
-        with open(path, 'w') as f:
+        with open(path, 'w', encoding='utf-8') as f:
             json.dump({
                 'entity2idx': self.entity2idx,
                 'relation2idx': self.relation2idx
-            }, f)
+            }, f, ensure_ascii=False)
     
     @classmethod
     def load(cls, path: str) -> 'EntityRelationVocab':
         vocab = cls()
-        with open(path, 'r') as f:
+        with open(path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         vocab.entity2idx = data['entity2idx']
         vocab.idx2entity = {int(v): k for k, v in data['entity2idx'].items()}
