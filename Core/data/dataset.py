@@ -123,7 +123,8 @@ class KGPathDataset(Dataset):
         max_entities: int = 50000,
         max_relations: int = 5000,
         build_vocab: bool = False,
-        training: bool = True  # If True, randomly sample paths; if False, use first path
+        training: bool = True,  # If True, randomly sample paths; if False, use first path
+        tokenize_nodes: bool = False
     ):
         self.data_path = Path(data_path)
         self.max_question_length = max_question_length
@@ -131,7 +132,9 @@ class KGPathDataset(Dataset):
         self.max_graph_nodes = max_graph_nodes
         self.max_entities = max_entities
         self.max_relations = max_relations
-        self.training = training  # Whether to randomly sample paths
+        self.training = training
+        self.tokenize_nodes = tokenize_nodes
+
         
         # Load tokenizer for questions
         self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
@@ -358,6 +361,17 @@ class KGPathDataset(Dataset):
             entities = path.get('entities', [])[:self.max_path_length]
             relations = path.get('relations', [])[:self.max_path_length - 1]
             
+            # Validate: ensure entities and relations are consistent
+            # A path with N entities (excluding BOS/EOS) should have N-1 relations
+            if len(entities) > 0 and len(relations) != len(entities) - 1:
+                # Adjust relations to match entities
+                expected_relations = max(0, len(entities) - 1)
+                if len(relations) > expected_relations:
+                    relations = relations[:expected_relations]
+                elif len(relations) < expected_relations:
+                    # Pad with PAD tokens if needed (shouldn't happen, but be safe)
+                    relations = relations + [self.vocab.relation2idx["<PAD>"]] * (expected_relations - len(relations))
+            
             # Encode entities
             path_entities = [self.vocab.get_entity_idx(str(e)) for e in entities]
             path_relations = [self.vocab.get_relation_idx(str(r)) for r in relations]
@@ -370,7 +384,10 @@ class KGPathDataset(Dataset):
             # Fill tensors
             path_len = len(path_entities)
             all_entities[i, :path_len] = torch.tensor(path_entities, dtype=torch.long)
-            all_relations[i, :len(path_relations)] = torch.tensor(path_relations, dtype=torch.long)
+            # Ensure we don't exceed the relation tensor size
+            rel_fill_len = min(len(path_relations), all_relations.shape[1])
+            if rel_fill_len > 0:
+                all_relations[i, :rel_fill_len] = torch.tensor(path_relations[:rel_fill_len], dtype=torch.long)
             all_local[i, :path_len] = torch.tensor(path_local, dtype=torch.long)
             all_lengths[i] = path_len
         
@@ -438,7 +455,7 @@ class KGPathDataset(Dataset):
                 'path_length': torch.tensor(2, dtype=torch.long)
             }
         
-        return {
+        result = {
             'id': sample.get('id', str(idx)),
             'question_input_ids': question_encoding['input_ids'].squeeze(0),
             'question_attention_mask': question_encoding['attention_mask'].squeeze(0),
@@ -453,6 +470,42 @@ class KGPathDataset(Dataset):
             # All paths
             **all_paths
         }
+        
+        # Tokenize nodes if requested
+        if self.tokenize_nodes:
+            # Get entity strings for all nodes in the local graph
+            # node_ids contains global vocab indices
+            # We need to map back to strings using self.vocab.idx2entity
+            # But wait, entity_to_local_idx has the strings directly!
+            # The order in node_ids corresponds to values in entity_to_local_idx sorted by value
+            
+            # Create a list of entity strings ordered by local index
+            local_idx_to_entity = {v: k for k, v in entity_to_local_idx.items()}
+            num_nodes = len(local_idx_to_entity)
+            node_strings = [local_idx_to_entity.get(i, "") for i in range(num_nodes)]
+            
+            # Tokenize
+            if not node_strings:
+                # Handle empty case to avoid tokenizer crash
+                # Must match num_nodes which is 1 for empty graphs (dummy node)
+                result['node_input_ids'] = torch.zeros((1, 32), dtype=torch.long)
+                result['node_attention_mask'] = torch.zeros((1, 32), dtype=torch.long)
+                # If possible, set to pad_token_id
+                if self.tokenizer.pad_token_id is not None:
+                    result['node_input_ids'].fill_(self.tokenizer.pad_token_id)
+            else:
+                node_encoding = self.tokenizer(
+                    node_strings,
+                    max_length=32,  # Reasonable max length for entity names
+                    padding='max_length',
+                    truncation=True,
+                    return_tensors='pt'
+                )
+                
+                result['node_input_ids'] = node_encoding['input_ids']
+                result['node_attention_mask'] = node_encoding['attention_mask']
+            
+        return result
 
 
 def collate_kg_batch(batch: List[Dict]) -> Dict[str, Any]:
@@ -480,6 +533,11 @@ def collate_kg_batch(batch: List[Dict]) -> Dict[str, Any]:
             node_ids=item['node_ids'],
             num_nodes=item['num_nodes'].item()
         )
+        
+        if 'node_input_ids' in item:
+            data.node_input_ids = item['node_input_ids']
+            data.node_attention_mask = item['node_attention_mask']
+            
         graph_data_list.append(data)
     
     graph_batch = Batch.from_data_list(graph_data_list)
@@ -625,7 +683,8 @@ class KGPathDataModule(pl.LightningDataModule):
         max_path_length: int = 10,
         max_graph_nodes: int = 200,
         max_entities: int = 50000,
-        max_relations: int = 5000
+        max_relations: int = 5000,
+        tokenize_nodes: bool = False
     ):
         super().__init__()
         self.train_path = train_path
@@ -640,6 +699,7 @@ class KGPathDataModule(pl.LightningDataModule):
         self.max_graph_nodes = max_graph_nodes
         self.max_entities = max_entities
         self.max_relations = max_relations
+        self.tokenize_nodes = tokenize_nodes
         
         self.vocab = None
         self.train_dataset = None
@@ -673,7 +733,8 @@ class KGPathDataModule(pl.LightningDataModule):
                 max_entities=self.max_entities,
                 max_relations=self.max_relations,
                 build_vocab=build_vocab,
-                training=True  # Randomly sample paths during training
+                training=True,  # Randomly sample paths during training
+                tokenize_nodes=self.tokenize_nodes
             )
             
             # Use the vocab from dataset if we built it
@@ -692,7 +753,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
                     build_vocab=False,
-                    training=False  # Use first path for consistent evaluation
+                    training=False,  # Use first path for consistent evaluation
+                    tokenize_nodes=self.tokenize_nodes
                 )
         
         if stage == 'test' or stage is None:
@@ -707,7 +769,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
                     build_vocab=False,
-                    training=False  # Use first path for consistent evaluation
+                    training=False,  # Use first path for consistent evaluation
+                    tokenize_nodes=self.tokenize_nodes
                 )
     
     def train_dataloader(self):

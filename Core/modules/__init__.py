@@ -8,13 +8,19 @@ from .diffusion import (
     DiscreteDiffusion,
     SinusoidalPositionEmbeddings
 )
+from .flow_matching import (
+    FlowMatchingTransformer,
+    FlowMatchingPathGenerator
+)
 
 __all__ = [
     'RelationalGraphEncoder',
-    'GraphTransformerEncoder', 
+    'GraphTransformerEncoder',
     'HybridGraphEncoder',
     'PathDiffusionTransformer',
     'DiscreteDiffusion',
-    'SinusoidalPositionEmbeddings'
+    'SinusoidalPositionEmbeddings',
+    'FlowMatchingTransformer',
+    'FlowMatchingPathGenerator'
 ]
 

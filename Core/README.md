@@ -1,6 +1,6 @@
 # KG Path Diffusion Model
 
-A **Graph Diffusion Model** for generating reasoning paths from knowledge graphs, given natural language questions.
+A **Graph Diffusion / Flow Matching** model for generating reasoning paths from knowledge graphs, given natural language questions.
 
 ## Architecture
 
@@ -20,6 +20,7 @@ Noisy Path ──► [Path Transformer with AdaLN] ─────────�
 2. **Graph Encoder**: Hybrid RGCN + Graph Transformer for encoding KG subgraphs with relation-aware message passing
 3. **Discrete Diffusion**: D3PM-style discrete diffusion for generating sequences of (entity, relation) pairs
 4. **Path Transformer**: Transformer with Adaptive Layer Norm (AdaLN) conditioning on timestep
+5. **Flow Matching Transformer (optional)**: Rectified-flow style generator that predicts velocity fields in the embedding space, inspired by [Flow Matching (Lipman et al., 2022)](https://arxiv.org/abs/2210.02747), enabling fewer sampling steps than diffusion.
 
 ## Features
 
@@ -35,7 +36,7 @@ Noisy Path ──► [Path Transformer with AdaLN] ─────────�
 ### Windows
 
 ```batch
-# Training
+# Training (uses configs\flow_matching_base.yaml by default)
 run_train.bat Wu
 
 # Inference
@@ -51,7 +52,7 @@ run_quick_test.bat Wu
 # Make scripts executable
 chmod +x run_train.sh run_inference.sh run_quick_test.sh
 
-# Training
+# Training (uses configs/flow_matching_base.yaml by default)
 ./run_train.sh Wu
 
 # Inference
@@ -101,12 +102,12 @@ The model expects data in JSONL format with the following structure:
 
 **Windows:**
 ```batch
-run_train.bat Wu
+run_train.bat Wu [optional_config]
 ```
 
 **Linux/Mac:**
 ```bash
-./run_train.sh Wu
+./run_train.sh Wu [optional_config]
 ```
 
 ### Manual Command
@@ -147,6 +148,53 @@ python train.py \
     --wandb_project kg-path-diffusion \
     --experiment_name exp1
 ```
+
+### Configuration Files
+
+- Pass `--config path/to/config.yaml` to `train.py` (or rely on `run_train.*`, which defaults to `configs/flow_matching_base.yaml`).
+- Config files are plain YAML/JSON dictionaries whose keys match the CLI arguments. Command-line flags provided alongside `--config` continue to override the file.
+- Example (`configs/flow_matching_base.yaml`):
+
+```yaml
+train_data: ../Data/webqsp_final/train.parquet
+val_data: ../Data/webqsp_final/val.parquet
+graph_encoder: hybrid
+hidden_dim: 128
+dropout: 0.1
+num_graph_layers: 1
+num_diffusion_layers: 1
+num_heads: 8
+num_diffusion_steps: 12
+path_generator_type: flow_matching
+flow_integration_steps: 32
+flow_ce_weight: 0.1
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 64
+max_path_length: 12
+
+max_graph_nodes: 180
+max_vocab_size: 500000
+max_entities: 500000
+max_relations: 50000
+batch_size: 2
+num_workers: 4
+learning_rate: 1e-4
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 100000
+max_epochs: 50
+gradient_clip: 1.0
+accumulate_grad_batches: 1
+gpus: 1
+precision: 16-mixed
+strategy: auto
+output_dir: outputs_multipath_flowmatching
+experiment_name: kg_path_diffusion_flow
+```
+
+Duplicate this file (or create a new one) to keep experiment settings under version control.
 
 ## Inference
 
@@ -195,11 +243,31 @@ python inference.py \
 |-----------|---------|-------------|
 | `hidden_dim` | 256 | Hidden dimension size |
 | `num_graph_layers` | 3 | Number of graph encoder layers |
-| `num_diffusion_layers` | 6 | Number of diffusion transformer layers |
+| `num_diffusion_layers` | 6 | Number of transformer blocks inside the path generator |
 | `num_heads` | 8 | Number of attention heads |
-| `num_diffusion_steps` | 1000 | Number of diffusion timesteps |
+| `num_diffusion_steps` | 1000 | Diffusion timesteps (when `path_generator_type=diffusion`) |
+| `path_generator_type` | `diffusion` | Switch between `diffusion` and `flow_matching` |
+| `flow_integration_steps` | 32 | Euler integration steps for flow-matching sampling |
+| `flow_ce_weight` | 0.1 | Auxiliary CE weight that stabilizes discrete decoding |
 | `max_path_length` | 20 | Maximum generated path length |
+
+| `question_encoder` | MiniLM | Pretrained question encoder name |
+| `tokenizer_name` | question encoder | Tokenizer used for questions (defaults to encoder) |
+| `max_question_length` | 64 | Max tokens per question |
+| `max_graph_nodes` | 200 | Max nodes retained from each local subgraph |
+| `max_entities` | `max_vocab_size` (500k) | Entity vocab cap when building from scratch |
+| `max_relations` | 50000 | Relation vocab cap |
 | `graph_encoder` | hybrid | Type: `rgcn`, `transformer`, `hybrid` |
+
+### Selecting the Path Generator
+
+Both generators reuse the same question/graph encoders. Use:
+
+```bash
+python train.py ... --path_generator_type flow_matching --flow_integration_steps 32
+```
+
+Flow Matching uses a rectified-flow velocity objective [Lipman et al., 2022](https://arxiv.org/abs/2210.02747), which keeps sampling fast (no reverse diffusion loop) while maintaining state-of-the-art quality on long reasoning paths. Temperature controls continue to work for both generators.
 
 ## Performance Tips
 
@@ -240,7 +308,10 @@ Core/
 │   └── dataset.py        # Dataset and data loading
 ├── modules/
 │   ├── diffusion.py      # Discrete diffusion module
+│   ├── flow_matching.py  # Flow-matching velocity transformer
 │   └── graph_encoder.py  # Graph encoding modules
+├── configs/
+│   └── flow_matching_base.yaml  # Example training configuration
 └── outputs_1/            # Training outputs
     ├── checkpoints/      # Model checkpoints
     └── vocab.json        # Vocabulary file

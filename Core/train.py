@@ -11,7 +11,10 @@ Features:
 # python train.py --train_data ../Data/webqsp_combined/train_combined.parquet --val_data ../Data/webqsp_combined/val.jsonl --batch_size 4 --hidden_dim 128 --num_graph_layers 2 --num_diffusion_layers 2 --num_diffusion_steps 100 --max_path_length 20 --gpus 1 --output_dir outputs_1
 import os
 import sys
+import json
 import argparse
+from pathlib import Path
+from typing import Any, Dict
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import (
     ModelCheckpoint,
@@ -29,12 +32,115 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from data.dataset import KGPathDataModule
 from kg_path_diffusion import KGPathDiffusionLightning
 
+DEFAULTS = {
+    'train_data': None,
+    'val_data': None,
+    'test_data': None,
+    'vocab_path': None,
+    'hidden_dim': 128,
+    'num_graph_layers': 3,
+    'num_diffusion_layers': 6,
+    'num_heads': 8,
+    'num_diffusion_steps': 1000,
+    'path_generator_type': 'diffusion',
+    'flow_integration_steps': 32,
+    'flow_ce_weight': 0.1,
+    'max_path_length': 20,
+    'dropout': 0.1,
+    'graph_encoder': 'hybrid',
+    'question_encoder': 'sentence-transformers/all-MiniLM-L6-v2',
+    'tokenizer_name': None,
+    'freeze_question_encoder': False,
+    'max_vocab_size': 200000,
+    'max_entities': None,
+    'max_relations': 50000,
+    'max_question_length': 64,
+    'max_graph_nodes': 200,
+
+    'batch_size': 32,
+    'num_workers': 4,
+    'learning_rate': 1e-4,
+    'weight_decay': 0.01,
+    'warmup_steps': 1000,
+    'max_steps': 100000,
+    'max_epochs': 100,
+    'gradient_clip': 1.0,
+    'accumulate_grad_batches': 1,
+    'gpus': -1,
+    'precision': '16-mixed',
+    'strategy': 'auto',
+    'output_dir': 'outputs',
+    'experiment_name': 'kg_path_diffusion',
+    'wandb': False,
+    'wandb_project': 'kg-path-diffusion',
+    'seed': 42,
+    'resume': None,
+    'debug': False,
+    'use_entity_embeddings': True,
+    'predict_entities': True,
+}
+
+try:
+    import yaml  # Optional dependency for YAML configs
+except ImportError:
+    yaml = None
+
+
+def load_config_file(config_path: str) -> Dict[str, Any]:
+    """Load JSON/YAML config that maps argument names to values."""
+    path = Path(config_path)
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with path.open("r", encoding="utf-8") as f:
+        if path.suffix.lower() in {".yml", ".yaml"}:
+            if yaml is None:
+                raise ImportError(
+                    "PyYAML is required to parse YAML configs. Install with `pip install pyyaml`."
+                )
+            data = yaml.safe_load(f)
+        elif path.suffix.lower() == ".json":
+            data = json.load(f)
+        else:
+            raise ValueError(f"Unsupported config extension: {path.suffix}")
+    if not isinstance(data, dict):
+        raise ValueError("Config file must contain a key-value mapping.")
+    return data
+
+
+def _infer_cli_overrides(argv):
+    overrides = set()
+    i = 0
+    while i < len(argv):
+        token = argv[i]
+        if token.startswith('--'):
+            option = token
+            value_inline = '=' in option
+            if value_inline:
+                option = option.split('=', 1)[0]
+            name = option.lstrip('-').replace('-', '_')
+            overrides.add(name)
+            if not value_inline and i + 1 < len(argv) and not argv[i + 1].startswith('--'):
+                i += 2
+                continue
+            i += 1
+            continue
+        i += 1
+    return overrides
+
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Train KG Path Diffusion Model')
+    # Pre-parse config so we can load defaults before full argument validation
+    config_parser = argparse.ArgumentParser(add_help=False)
+    config_parser.add_argument('--config', type=str, default=None,
+                               help='Path to YAML/JSON file with argument overrides')
+    config_args, remaining_argv = config_parser.parse_known_args()
+    
+    parser = argparse.ArgumentParser(description='Train KG Path Diffusion Model',
+                                     parents=[config_parser],
+                                     add_help=True)
     
     # Data arguments
-    parser.add_argument('--train_data', type=str, required=True,
+    parser.add_argument('--train_data', type=str, default=None,
                         help='Path to training data (parquet or jsonl)')
     parser.add_argument('--val_data', type=str, default=None,
                         help='Path to validation data')
@@ -44,16 +150,23 @@ def parse_args():
                         help='Path to pre-built vocabulary (recommended for avoiding UNK tokens)')
     
     # Model arguments
-    parser.add_argument('--hidden_dim', type=int, default=256,
+    parser.add_argument('--hidden_dim', type=int, default=128,
                         help='Hidden dimension size')
     parser.add_argument('--num_graph_layers', type=int, default=3,
                         help='Number of graph encoder layers')
     parser.add_argument('--num_diffusion_layers', type=int, default=6,
-                        help='Number of diffusion transformer layers')
+                        help='Number of transformer layers in the path generator')
     parser.add_argument('--num_heads', type=int, default=8,
                         help='Number of attention heads')
     parser.add_argument('--num_diffusion_steps', type=int, default=1000,
                         help='Number of diffusion timesteps')
+    parser.add_argument('--path_generator_type', type=str, default='diffusion',
+                        choices=['diffusion', 'flow_matching'],
+                        help='Generative backend used for path decoding')
+    parser.add_argument('--flow_integration_steps', type=int, default=32,
+                        help='Euler steps used when sampling with flow matching')
+    parser.add_argument('--flow_ce_weight', type=float, default=0.1,
+                        help='Auxiliary CE coefficient for flow matching stability')
     parser.add_argument('--max_path_length', type=int, default=20,
                         help='Maximum path length')
     parser.add_argument('--dropout', type=float, default=0.1,
@@ -64,10 +177,25 @@ def parse_args():
     parser.add_argument('--question_encoder', type=str, 
                         default='sentence-transformers/all-MiniLM-L6-v2',
                         help='Pretrained question encoder model')
+    parser.add_argument('--tokenizer_name', type=str, default=None,
+                        help='Tokenizer used for question text (defaults to question encoder tokenizer)')
     parser.add_argument('--freeze_question_encoder', action='store_true',
                         help='Freeze question encoder weights')
-    parser.add_argument('--max_vocab_size', type=int, default=50000,
+    parser.add_argument('--max_vocab_size', type=int, default=200000,
                         help='Maximum vocabulary size (to limit memory usage)')
+    parser.add_argument('--max_entities', type=int, default=None,
+                        help='Maximum unique entities to keep (defaults to max_vocab_size)')
+    parser.add_argument('--max_relations', type=int, default=50000,
+                        help='Maximum unique relations to keep')
+    parser.add_argument('--max_question_length', type=int, default=64,
+                        help='Maximum question tokens for tokenizer')
+    parser.add_argument('--max_graph_nodes', type=int, default=200,
+                        help='Maximum nodes retained per local graph')
+
+    parser.add_argument('--use_entity_embeddings', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Whether to use learnable entity embeddings')
+    parser.add_argument('--predict_entities', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Whether to predict entities in the path generation')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=32,
@@ -117,11 +245,47 @@ def parse_args():
     parser.add_argument('--debug', action='store_true',
                         help='Enable debug mode (fast dev run)')
     
-    return parser.parse_args()
+    parser.set_defaults(**DEFAULTS)
+    
+    cli_overrides = _infer_cli_overrides(remaining_argv)
+    config_path = config_args.config
+    args = parser.parse_args(remaining_argv)
+    
+    if config_path:
+        config_overrides = load_config_file(config_path)
+        valid_keys = {action.dest for action in parser._actions if action.dest != 'help'}
+        invalid = set(config_overrides.keys()) - valid_keys
+        if invalid:
+            raise ValueError(f"Unknown config keys: {invalid}")
+        for key, value in config_overrides.items():
+            if key not in cli_overrides or key == 'config':
+                setattr(args, key, value)
+        args.config = config_path
+    else:
+        args.config = None
+    
+    # Re-validate required arguments
+    missing_required = []
+    for action in parser._actions:
+        if action.required and getattr(args, action.dest, None) is None:
+            missing_required.append(f"--{action.dest}")
+    if missing_required:
+        raise ValueError(f"Missing required arguments after config merge: {missing_required}")
+    if args.train_data is None:
+        raise ValueError("`train_data` must be provided via CLI or config.")
+    
+    return args
 
 
 def main():
     args = parse_args()
+    
+    # Set float32 matmul precision for Tensor Cores
+    torch.set_float32_matmul_precision('medium')
+    
+    # Resolve shared defaults
+    tokenizer_name = args.tokenizer_name or args.question_encoder
+    max_entities = args.max_entities if args.max_entities is not None else args.max_vocab_size
     
     # Set seed for reproducibility
     pl.seed_everything(args.seed, workers=True)
@@ -137,8 +301,18 @@ def main():
     print(f"Vocab path: {args.vocab_path if args.vocab_path else '(will build from train data)'}")
     print(f"Batch size: {args.batch_size}")
     print(f"Hidden dim: {args.hidden_dim}")
+    print(f"Graph encoder: {args.graph_encoder} ({args.num_graph_layers} layers)")
+    print(f"Path transformer layers: {args.num_diffusion_layers} | heads: {args.num_heads} | dropout: {args.dropout}")
+    print(f"Question encoder: {args.question_encoder} | tokenizer: {tokenizer_name}")
+    print(f"Max question len: {args.max_question_length} | max path len: {args.max_path_length} | max graph nodes: {args.max_graph_nodes}")
+    print(f"Max vocab: entities {max_entities} | relations {args.max_relations}")
+
+    print(f"Path generator: {args.path_generator_type}")
     print(f"Precision: {args.precision}")
     print("="*60)
+    if args.path_generator_type == 'flow_matching':
+        print(f"Flow integration steps: {args.flow_integration_steps}")
+        print(f"Flow CE weight: {args.flow_ce_weight}")
     
     # Create data module
     print("\nSetting up data module...")
@@ -149,8 +323,13 @@ def main():
         vocab_path=args.vocab_path,  # Use pre-built vocabulary if provided
         batch_size=args.batch_size,
         num_workers=args.num_workers,
+        tokenizer_name=tokenizer_name,
+        max_question_length=args.max_question_length,
         max_path_length=args.max_path_length,
-        max_graph_nodes=200  # Limit graph size for memory
+        max_graph_nodes=args.max_graph_nodes,
+        max_entities=max_entities,
+        max_relations=args.max_relations,
+        tokenize_nodes=not args.use_entity_embeddings
     )
     
     # Setup data to build vocabulary
@@ -184,7 +363,12 @@ def main():
         learning_rate=args.learning_rate,
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
-        max_steps=args.max_steps
+        max_steps=args.max_steps,
+        path_generator_type=args.path_generator_type,
+        flow_integration_steps=args.flow_integration_steps,
+        flow_ce_weight=args.flow_ce_weight,
+        use_entity_embeddings=args.use_entity_embeddings,
+        predict_entities=args.predict_entities
     )
     
     # Count parameters
@@ -232,7 +416,7 @@ def main():
             save_dir=args.output_dir,
             name=args.experiment_name
         )
-    
+
     # Determine number of GPUs
     if args.gpus == -1:
         num_gpus = torch.cuda.device_count()

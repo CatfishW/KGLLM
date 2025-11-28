@@ -2,8 +2,8 @@
 REM ============================================================
 REM KG Path Diffusion Model - Training Script (Windows)
 REM ============================================================
-REM Usage: run_train.bat [conda_env_name]
-REM   Example: run_train.bat Wu
+REM Usage: run_train.bat [conda_env_name] [config_path]
+REM   Example: run_train.bat Wu configs\flow_matching_base.yaml
 REM ============================================================
 
 setlocal
@@ -12,6 +12,11 @@ REM Default conda environment
 set CONDA_ENV=%1
 if "%CONDA_ENV%"=="" set CONDA_ENV=Wu
 
+set TRAIN_CONFIG=.\configs\diffusion.yaml
+@REM if "%TRAIN_CONFIG%"=="" set TRAIN_CONFIG=.\configs\flow_matching_base.yaml
+
+
+echo Config File    : %TRAIN_CONFIG%
 echo ============================================================
 echo KG Path Diffusion Model - Training
 echo ============================================================
@@ -26,20 +31,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM Run training with recommended settings
-python train.py ^
-    --train_data ../Data/webqsp_final/train.parquet ^
-    --val_data ../Data/webqsp_final/val.parquet ^
-    --vocab_path ../Data/webqsp_final/vocab.json ^
-    --batch_size 2 ^
-    --hidden_dim 64 ^
-    --num_graph_layers 1 ^
-    --num_diffusion_layers 1 ^
-    --num_diffusion_steps 8 ^
-    --max_path_length 12 ^
-    --gpus 1 ^
-    --output_dir outputs_multipath_small ^
-    --max_epochs 50
+REM Run training with config-based settings
+python train.py --config "%TRAIN_CONFIG%"
 
 echo.
 echo ============================================================

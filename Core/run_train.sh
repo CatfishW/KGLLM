@@ -2,15 +2,17 @@
 # ============================================================
 # KG Path Diffusion Model - Training Script (Linux/Mac)
 # ============================================================
-# Usage: ./run_train.sh [conda_env_name]
-#   Example: ./run_train.sh Wu
+# Usage: ./run_train.sh [conda_env_name] [config_path]
+#   Example: ./run_train.sh Wu ./configs/flow_matching_base.yaml
 # ============================================================
 
 set -e
 
-# Default conda environment
+# Default conda environment and config
 CONDA_ENV="${1:-Wu}"
+CONFIG_PATH="${2:-./configs/flow_matching_base.yaml}"
 
+echo "Config File    : $CONFIG_PATH"
 echo "============================================================"
 echo "KG Path Diffusion Model - Training"
 echo "============================================================"
@@ -21,19 +23,8 @@ echo "============================================================"
 source "$(conda info --base)/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV"
 
-# Run training with recommended settings
-python train.py \
-    --train_data ../Data/webqsp_combined/train_combined.parquet \
-    --val_data ../Data/webqsp_combined/val.jsonl \
-    --batch_size 4 \
-    --hidden_dim 128 \
-    --num_graph_layers 2 \
-    --num_diffusion_layers 2 \
-    --num_diffusion_steps 100 \
-    --max_path_length 20 \
-    --gpus 1 \
-    --output_dir outputs \
-    --max_epochs 50
+# Run training with config-based settings
+python train.py --config "$CONFIG_PATH"
 
 echo ""
 echo "============================================================"

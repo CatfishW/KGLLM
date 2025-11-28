@@ -42,7 +42,7 @@ class PathTransformerBlock(nn.Module):
     ):
         super().__init__()
         
-        self.norm1 = nn.LayerNorm(hidden_dim)
+        self.norm1 = nn.LayerNorm(hidden_dim, eps=1e-6)
         self.attn = nn.MultiheadAttention(
             hidden_dim, 
             num_heads, 
@@ -50,7 +50,7 @@ class PathTransformerBlock(nn.Module):
             batch_first=True
         )
         
-        self.norm2 = nn.LayerNorm(hidden_dim)
+        self.norm2 = nn.LayerNorm(hidden_dim, eps=1e-6)
         mlp_hidden = int(hidden_dim * mlp_ratio)
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, mlp_hidden),
@@ -77,13 +77,16 @@ class PathTransformerBlock(nn.Module):
             self.adaLN_modulation(time_emb).chunk(6, dim=-1)
         
         # Self-attention with AdaLN
-        x_norm = self.norm1(x)
+        # Force float32 for LayerNorm to avoid instability in mixed precision
+        with torch.cuda.amp.autocast(enabled=False):
+            x_norm = self.norm1(x.float()).type_as(x)
         x_norm = x_norm * (1 + scale_msa.unsqueeze(1)) + shift_msa.unsqueeze(1)
         attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask)
         x = x + gate_msa.unsqueeze(1) * attn_out
         
         # MLP with AdaLN
-        x_norm = self.norm2(x)
+        with torch.cuda.amp.autocast(enabled=False):
+            x_norm = self.norm2(x.float()).type_as(x)
         x_norm = x_norm * (1 + scale_mlp.unsqueeze(1)) + shift_mlp.unsqueeze(1)
         x = x + gate_mlp.unsqueeze(1) * self.mlp(x_norm)
         
@@ -153,7 +156,8 @@ class PathDiffusionTransformer(nn.Module):
         question_dim: int = 384,  # Dimension of question encoder output
         graph_dim: int = 256,  # Dimension of graph encoder output
         max_path_length: int = 20,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        predict_entities: bool = True
     ):
         super().__init__()
         
@@ -161,16 +165,25 @@ class PathDiffusionTransformer(nn.Module):
         self.num_relations = num_relations
         self.hidden_dim = hidden_dim
         self.max_path_length = max_path_length
+        self.predict_entities = predict_entities
         
         # Entity and relation embeddings for path tokens
-        self.entity_embedding = nn.Embedding(num_entities, hidden_dim, padding_idx=0)
+        if predict_entities:
+            self.entity_embedding = nn.Embedding(num_entities, hidden_dim, padding_idx=0)
+        else:
+            self.entity_embedding = None
+            
         self.relation_embedding = nn.Embedding(num_relations, hidden_dim, padding_idx=0)
         
         # Position embedding for sequence positions
-        self.pos_embedding = nn.Embedding(max_path_length, hidden_dim)
+        # If predict_entities is False, sequence length is roughly half (just relations)
+        self.pos_embedding = nn.Embedding(max_path_length * 2, hidden_dim)
         
         # Token type embedding (0=entity, 1=relation)
-        self.type_embedding = nn.Embedding(2, hidden_dim)
+        if predict_entities:
+            self.type_embedding = nn.Embedding(2, hidden_dim)
+        else:
+            self.type_embedding = None
         
         # Time embedding
         self.time_mlp = nn.Sequential(
@@ -195,12 +208,17 @@ class PathDiffusionTransformer(nn.Module):
         
         # Output heads
         self.norm_out = nn.LayerNorm(hidden_dim)
-        self.entity_head = nn.Linear(hidden_dim, num_entities)
+        
+        if predict_entities:
+            self.entity_head = nn.Linear(hidden_dim, num_entities)
+        else:
+            self.entity_head = None
+            
         self.relation_head = nn.Linear(hidden_dim, num_relations)
     
     def forward(
         self,
-        noisy_entities: torch.Tensor,  # [B, L]
+        noisy_entities: Optional[torch.Tensor],  # [B, L] or None
         noisy_relations: torch.Tensor,  # [B, L-1]
         timesteps: torch.Tensor,  # [B]
         question_encoding: torch.Tensor,  # [B, seq_len, question_dim]
@@ -208,41 +226,67 @@ class PathDiffusionTransformer(nn.Module):
         path_mask: Optional[torch.Tensor] = None,  # [B, L]
         question_mask: Optional[torch.Tensor] = None,
         graph_mask: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
         """
         Predict clean path from noisy path.
         
         Returns:
-            entity_logits: [B, L, num_entities]
+            entity_logits: [B, L, num_entities] or None
             relation_logits: [B, L-1, num_relations]
         """
-        B, L = noisy_entities.shape
-        device = noisy_entities.device
+        B = noisy_relations.shape[0]
+        device = noisy_relations.device
         
-        # Embed entities and relations
-        entity_emb = self.entity_embedding(noisy_entities)  # [B, L, D]
+        # Embed relations
         relation_emb = self.relation_embedding(noisy_relations)  # [B, L-1, D]
         
-        # Interleave entities and relations: e0, r0, e1, r1, ..., eL
-        # Create sequence of length 2L-1
-        seq_len = 2 * L - 1
-        x = torch.zeros(B, seq_len, self.hidden_dim, device=device)
-        
-        # Place entities at even positions
-        x[:, 0::2, :] = entity_emb
-        # Place relations at odd positions
-        x[:, 1::2, :] = relation_emb
+        if self.predict_entities and noisy_entities is not None:
+            L = noisy_entities.shape[1]
+            # Embed entities
+            entity_emb = self.entity_embedding(noisy_entities)  # [B, L, D]
+            
+            # Interleave entities and relations: e0, r0, e1, r1, ..., eL
+            seq_len = 2 * L - 1
+            x = torch.zeros(B, seq_len, self.hidden_dim, device=device)
+            
+            # Place entities at even positions
+            x[:, 0::2, :] = entity_emb
+            # Place relations at odd positions
+            x[:, 1::2, :] = relation_emb
+            
+            # Add type embeddings
+            types = torch.zeros(seq_len, dtype=torch.long, device=device)
+            types[0::2] = 0  # entities
+            types[1::2] = 1  # relations
+            x = x + self.type_embedding(types).unsqueeze(0)
+            
+            # Create mask
+            if path_mask is not None:
+                seq_mask = torch.zeros(B, seq_len, dtype=torch.bool, device=device)
+                seq_mask[:, 0::2] = ~path_mask
+                seq_mask[:, 1::2] = ~path_mask[:, :-1]
+            else:
+                seq_mask = None
+                
+        else:
+            # Relation only mode
+            x = relation_emb
+            seq_len = x.shape[1]
+            
+            # Create mask (using relation part of path_mask)
+            if path_mask is not None:
+                # path_mask is [B, L] (entities). Relations are L-1.
+                # We assume path_mask corresponds to valid entities.
+                # Valid relations are one less.
+                seq_mask = ~path_mask[:, :-1].bool()
+            else:
+                seq_mask = None
         
         # Add position embeddings
         positions = torch.arange(seq_len, device=device).unsqueeze(0).expand(B, -1)
-        positions = positions.clamp(max=self.max_path_length - 1)
+        # Clamp to avoid index error if length changed
+        positions = positions.clamp(max=self.pos_embedding.num_embeddings - 1)
         x = x + self.pos_embedding(positions)
-        
-        # Add type embeddings
-        types = torch.zeros(seq_len, dtype=torch.long, device=device)
-        types[0::2] = 0  # entities
-        types[1::2] = 1  # relations
-        x = x + self.type_embedding(types).unsqueeze(0)
         
         # Time embedding
         time_emb = self.time_mlp(timesteps)  # [B, D]
@@ -250,15 +294,6 @@ class PathDiffusionTransformer(nn.Module):
         # Project context
         question_ctx = self.question_proj(question_encoding)
         graph_ctx = self.graph_proj(graph_node_encoding)
-        
-        # Create attention mask for padded positions
-        if path_mask is not None:
-            # Expand mask to interleaved format
-            seq_mask = torch.zeros(B, seq_len, dtype=torch.bool, device=device)
-            seq_mask[:, 0::2] = ~path_mask  # True where padded
-            seq_mask[:, 1::2] = ~path_mask[:, :-1]  # Relations have L-1 positions
-        else:
-            seq_mask = None
         
         # Apply transformer blocks
         for block in self.blocks:
@@ -268,13 +303,16 @@ class PathDiffusionTransformer(nn.Module):
         
         x = self.norm_out(x)
         
-        # Extract entity and relation representations
-        entity_repr = x[:, 0::2, :]  # [B, L, D]
-        relation_repr = x[:, 1::2, :]  # [B, L-1, D]
-        
-        # Predict logits
-        entity_logits = self.entity_head(entity_repr)
-        relation_logits = self.relation_head(relation_repr)
+        if self.predict_entities:
+            # Extract entity and relation representations
+            entity_repr = x[:, 0::2, :]  # [B, L, D]
+            relation_repr = x[:, 1::2, :]  # [B, L-1, D]
+            
+            entity_logits = self.entity_head(entity_repr)
+            relation_logits = self.relation_head(relation_repr)
+        else:
+            entity_logits = None
+            relation_logits = self.relation_head(x)
         
         return entity_logits, relation_logits
 
@@ -353,7 +391,7 @@ class DiscreteDiffusion(nn.Module):
     
     def compute_loss(
         self,
-        entity_logits: torch.Tensor,
+        entity_logits: Optional[torch.Tensor],
         relation_logits: torch.Tensor,
         target_entities: torch.Tensor,
         target_relations: torch.Tensor,
@@ -362,33 +400,37 @@ class DiscreteDiffusion(nn.Module):
         """
         Compute cross-entropy loss for denoising prediction.
         """
-        B, L, _ = entity_logits.shape
-        
-        # Flatten for loss computation
-        entity_logits_flat = entity_logits.view(-1, self.num_entities)
-        target_entities_flat = target_entities.view(-1)
-        
-        relation_logits_flat = relation_logits.view(-1, self.num_relations)
+        # Always compute the loss in float32 to avoid FP16 overflow under AMP
+        relation_logits_flat = relation_logits.view(-1, self.num_relations).float()
         target_relations_flat = target_relations.view(-1)
         
-        # Compute loss with optional masking for padding
+        def _safe_cross_entropy(logits, targets, mask=None):
+            """Compute CE that gracefully handles the all-masked case."""
+            if mask is not None:
+                mask = mask.bool()
+                if not mask.any():
+                    return logits.new_zeros(())
+                logits = logits[mask]
+                targets = targets[mask]
+            return F.cross_entropy(logits, targets, ignore_index=0)
+        
         if path_mask is not None:
-            entity_mask_flat = path_mask.view(-1)
             relation_mask_flat = path_mask[:, :-1].reshape(-1)
-            
-            entity_loss = F.cross_entropy(
-                entity_logits_flat[entity_mask_flat],
-                target_entities_flat[entity_mask_flat],
-                ignore_index=0  # Ignore padding
-            )
-            relation_loss = F.cross_entropy(
-                relation_logits_flat[relation_mask_flat],
-                target_relations_flat[relation_mask_flat],
-                ignore_index=0
-            )
+            relation_loss = _safe_cross_entropy(relation_logits_flat, target_relations_flat, relation_mask_flat)
         else:
-            entity_loss = F.cross_entropy(entity_logits_flat, target_entities_flat, ignore_index=0)
-            relation_loss = F.cross_entropy(relation_logits_flat, target_relations_flat, ignore_index=0)
+            relation_loss = _safe_cross_entropy(relation_logits_flat, target_relations_flat)
+            
+        if entity_logits is not None:
+            entity_logits_flat = entity_logits.view(-1, self.num_entities).float()
+            target_entities_flat = target_entities.view(-1)
+            
+            if path_mask is not None:
+                entity_mask_flat = path_mask.view(-1)
+                entity_loss = _safe_cross_entropy(entity_logits_flat, target_entities_flat, entity_mask_flat)
+            else:
+                entity_loss = _safe_cross_entropy(entity_logits_flat, target_entities_flat)
+        else:
+            entity_loss = torch.tensor(0.0, device=relation_logits.device)
         
         total_loss = entity_loss + relation_loss
         
@@ -427,49 +469,56 @@ class DiscreteDiffusion(nn.Module):
             
             # Get predictions
             entity_logits, relation_logits = denoiser(
-                entities, relations, t_batch,
+                entities if denoiser.predict_entities else None, 
+                relations, 
+                t_batch,
                 question_encoding, graph_node_encoding,
+
                 question_mask=question_mask,
                 graph_mask=graph_mask
             )
             
             # Sample from predictions (with temperature)
             if temperature > 0:
-                entity_probs = F.softmax(entity_logits / temperature, dim=-1)
                 relation_probs = F.softmax(relation_logits / temperature, dim=-1)
-                
-                # Only update masked positions
-                entity_samples = torch.multinomial(
-                    entity_probs.view(-1, self.num_entities), 1
-                ).view(B, path_length)
                 relation_samples = torch.multinomial(
                     relation_probs.view(-1, self.num_relations), 1
                 ).view(B, path_length - 1)
+                
+                if entity_logits is not None:
+                    entity_probs = F.softmax(entity_logits / temperature, dim=-1)
+                    entity_samples = torch.multinomial(
+                        entity_probs.view(-1, self.num_entities), 1
+                    ).view(B, path_length)
             else:
-                entity_samples = entity_logits.argmax(dim=-1)
                 relation_samples = relation_logits.argmax(dim=-1)
+                if entity_logits is not None:
+                    entity_samples = entity_logits.argmax(dim=-1)
             
             # Determine which positions to update based on schedule
             if t > 0:
                 # Gradually unmask
                 unmask_prob = 1 - self.alpha_cumprod[t-1] / self.alpha_cumprod[t]
-                entity_unmask = torch.rand(B, path_length, device=device) < unmask_prob
                 relation_unmask = torch.rand(B, path_length - 1, device=device) < unmask_prob
                 
-                entities = torch.where(
-                    entity_unmask & (entities == self.entity_mask_idx),
-                    entity_samples,
-                    entities
-                )
                 relations = torch.where(
                     relation_unmask & (relations == self.relation_mask_idx),
                     relation_samples,
                     relations
                 )
+                
+                if entity_logits is not None:
+                    entity_unmask = torch.rand(B, path_length, device=device) < unmask_prob
+                    entities = torch.where(
+                        entity_unmask & (entities == self.entity_mask_idx),
+                        entity_samples,
+                        entities
+                    )
             else:
                 # Final step: unmask everything
-                entities = entity_samples
                 relations = relation_samples
+                if entity_logits is not None:
+                    entities = entity_samples
         
         return entities, relations
 

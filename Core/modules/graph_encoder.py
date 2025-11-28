@@ -35,7 +35,8 @@ class RelationalGraphEncoder(nn.Module):
         output_dim: int = 256,
         num_layers: int = 3,
         num_bases: int = 30,  # For weight decomposition in RGCN
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        use_entity_embeddings: bool = True
     ):
         super().__init__()
         
@@ -44,9 +45,13 @@ class RelationalGraphEncoder(nn.Module):
         self.entity_dim = entity_dim
         self.hidden_dim = hidden_dim
         self.output_dim = output_dim
+        self.use_entity_embeddings = use_entity_embeddings
         
         # Entity embeddings
-        self.entity_embedding = nn.Embedding(num_entities, entity_dim, padding_idx=0)
+        if use_entity_embeddings:
+            self.entity_embedding = nn.Embedding(num_entities, entity_dim, padding_idx=0)
+        else:
+            self.entity_embedding = None
         
         # R-GCN layers
         self.layers = nn.ModuleList()
@@ -74,7 +79,10 @@ class RelationalGraphEncoder(nn.Module):
         node_ids: torch.Tensor,
         edge_index: torch.Tensor,
         edge_type: torch.Tensor,
-        batch: Optional[torch.Tensor] = None
+        batch: Optional[torch.Tensor] = None,
+        node_input_ids: Optional[torch.Tensor] = None,
+        node_attention_mask: Optional[torch.Tensor] = None,
+        text_encoder: Optional[nn.Module] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode graph nodes.
@@ -84,13 +92,23 @@ class RelationalGraphEncoder(nn.Module):
             edge_index: [2, num_edges] tensor
             edge_type: [num_edges] tensor of relation indices
             batch: [num_nodes] tensor indicating which graph each node belongs to
+            node_input_ids: [num_nodes, seq_len] tokenized text
+            node_attention_mask: [num_nodes, seq_len] attention mask
+            text_encoder: Encoder module to use if use_entity_embeddings is False
         
         Returns:
             node_embeddings: [num_nodes, output_dim]
             graph_embedding: [batch_size, output_dim] (if batch is provided)
         """
         # Get initial embeddings
-        x = self.entity_embedding(node_ids)
+        if self.use_entity_embeddings:
+            x = self.entity_embedding(node_ids)
+        elif text_encoder is not None and node_input_ids is not None:
+            # Use text encoder (frozen or shared)
+            # text_encoder returns (seq_output, pooled_output)
+            _, x = text_encoder(node_input_ids, node_attention_mask)
+        else:
+            raise ValueError("Must provide text_encoder and node inputs when use_entity_embeddings is False")
         
         # Apply R-GCN layers
         for i, (layer, norm) in enumerate(zip(self.layers, self.norms)):
@@ -218,12 +236,19 @@ class HybridGraphEncoder(nn.Module):
         num_transformer_layers: int = 2,
         num_heads: int = 8,
         num_bases: int = 30,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        use_entity_embeddings: bool = True
     ):
         super().__init__()
         
+        self.use_entity_embeddings = use_entity_embeddings
+        
         # Entity and relation embeddings
-        self.entity_embedding = nn.Embedding(num_entities, entity_dim, padding_idx=0)
+        if use_entity_embeddings:
+            self.entity_embedding = nn.Embedding(num_entities, entity_dim, padding_idx=0)
+        else:
+            self.entity_embedding = None
+            
         self.relation_embedding = nn.Embedding(num_relations, entity_dim, padding_idx=0)
         
         # RGCN layers for structural encoding
@@ -260,12 +285,21 @@ class HybridGraphEncoder(nn.Module):
         node_ids: torch.Tensor,
         edge_index: torch.Tensor,
         edge_type: torch.Tensor,
-        batch: Optional[torch.Tensor] = None
+        batch: Optional[torch.Tensor] = None,
+        node_input_ids: Optional[torch.Tensor] = None,
+        node_attention_mask: Optional[torch.Tensor] = None,
+        text_encoder: Optional[nn.Module] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode graph with hybrid RGCN + Transformer architecture.
         """
-        x = self.entity_embedding(node_ids)
+        if self.use_entity_embeddings:
+            x = self.entity_embedding(node_ids)
+        elif text_encoder is not None and node_input_ids is not None:
+            _, x = text_encoder(node_input_ids, node_attention_mask)
+        else:
+            raise ValueError("Must provide text_encoder and node inputs when use_entity_embeddings is False")
+            
         edge_attr = self.relation_embedding(edge_type)
         
         # RGCN layers

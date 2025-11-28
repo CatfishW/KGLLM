@@ -17,6 +17,7 @@ from torch_geometric.data import Batch
 
 from modules.graph_encoder import HybridGraphEncoder, RelationalGraphEncoder
 from modules.diffusion import PathDiffusionTransformer, DiscreteDiffusion
+from modules.flow_matching import FlowMatchingPathGenerator
 
 
 class QuestionEncoder(nn.Module):
@@ -86,7 +87,12 @@ class KGPathDiffusionModel(nn.Module):
         num_heads: int = 8,
         num_diffusion_steps: int = 1000,
         max_path_length: int = 20,
-        dropout: float = 0.1
+        dropout: float = 0.1,
+        path_generator_type: str = "diffusion",  # "diffusion" or "flow_matching"
+        flow_integration_steps: int = 32,
+        flow_ce_weight: float = 0.1,
+        use_entity_embeddings: bool = True,
+        predict_entities: bool = True
     ):
         super().__init__()
         
@@ -94,6 +100,9 @@ class KGPathDiffusionModel(nn.Module):
         self.num_relations = num_relations
         self.hidden_dim = hidden_dim
         self.max_path_length = max_path_length
+        self.path_generator_type = path_generator_type
+        self.predict_entities = predict_entities
+        self.use_entity_embeddings = use_entity_embeddings
         
         # Question encoder
         self.question_encoder = QuestionEncoder(
@@ -113,7 +122,8 @@ class KGPathDiffusionModel(nn.Module):
                 num_rgcn_layers=num_graph_layers // 2,
                 num_transformer_layers=num_graph_layers - num_graph_layers // 2,
                 num_heads=num_heads,
-                dropout=dropout
+                dropout=dropout,
+                use_entity_embeddings=use_entity_embeddings
             )
         else:
             self.graph_encoder = RelationalGraphEncoder(
@@ -123,34 +133,55 @@ class KGPathDiffusionModel(nn.Module):
                 hidden_dim=hidden_dim,
                 output_dim=hidden_dim,
                 num_layers=num_graph_layers,
-                dropout=dropout
+                dropout=dropout,
+                use_entity_embeddings=use_entity_embeddings
             )
         
-        # Path diffusion model
-        self.diffusion = DiscreteDiffusion(
-            num_entities=num_entities,
-            num_relations=num_relations,
-            num_timesteps=num_diffusion_steps
-        )
-        
-        self.denoiser = PathDiffusionTransformer(
-            num_entities=num_entities,
-            num_relations=num_relations,
-            hidden_dim=hidden_dim,
-            num_layers=num_diffusion_layers,
-            num_heads=num_heads,
-            question_dim=hidden_dim,
-            graph_dim=hidden_dim,
-            max_path_length=max_path_length,
-            dropout=dropout
-        )
+        if self.path_generator_type == "diffusion":
+            self.diffusion = DiscreteDiffusion(
+                num_entities=num_entities,
+                num_relations=num_relations,
+                num_timesteps=num_diffusion_steps
+            )
+            
+            self.denoiser = PathDiffusionTransformer(
+                num_entities=num_entities,
+                num_relations=num_relations,
+                hidden_dim=hidden_dim,
+                num_layers=num_diffusion_layers,
+                num_heads=num_heads,
+                question_dim=hidden_dim,
+                graph_dim=hidden_dim,
+                max_path_length=max_path_length,
+                dropout=dropout,
+                predict_entities=predict_entities
+            )
+        elif self.path_generator_type == "flow_matching":
+            # Flow matching not updated yet for relation-only mode
+            self.flow_generator = FlowMatchingPathGenerator(
+                num_entities=num_entities,
+                num_relations=num_relations,
+                hidden_dim=hidden_dim,
+                num_layers=num_diffusion_layers,
+                num_heads=num_heads,
+                question_dim=hidden_dim,
+                graph_dim=hidden_dim,
+                max_path_length=max_path_length,
+                dropout=dropout,
+                num_integration_steps=flow_integration_steps,
+                ce_weight=flow_ce_weight
+            )
+        else:
+            raise ValueError(f"Unknown path_generator_type: {self.path_generator_type}")
     
     def encode_inputs(
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_batch: Batch
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        graph_batch: Batch,
+        node_input_ids: Optional[torch.Tensor] = None,
+        node_attention_mask: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Encode question and graph inputs.
         
@@ -159,6 +190,7 @@ class KGPathDiffusionModel(nn.Module):
             question_pooled: [B, hidden_dim]
             graph_node_emb: [B, max_nodes, hidden_dim]
             graph_pooled: [B, hidden_dim]
+            graph_mask: [B, max_nodes] (True = ignored)
         """
         # Encode question
         question_seq, question_pooled = self.question_encoder(
@@ -166,11 +198,15 @@ class KGPathDiffusionModel(nn.Module):
         )
         
         # Encode graph
+        # Pass question encoder as text encoder if needed
         node_emb, graph_pooled = self.graph_encoder(
             graph_batch.node_ids,
             graph_batch.edge_index,
             graph_batch.edge_type,
-            graph_batch.batch
+            graph_batch.batch,
+            node_input_ids=node_input_ids,
+            node_attention_mask=node_attention_mask,
+            text_encoder=self.question_encoder
         )
         
         # Reshape node embeddings to [B, max_nodes, hidden_dim]
@@ -184,14 +220,21 @@ class KGPathDiffusionModel(nn.Module):
         # Create padded tensor
         graph_node_emb = torch.zeros(batch_size, max_nodes, self.hidden_dim, device=device)
         
-        # Fill in node embeddings
+        # Create mask (True = ignored/padding)
+        graph_mask = torch.ones(batch_size, max_nodes, dtype=torch.bool, device=device)
+        
+        # Fill in node embeddings and update mask
         node_idx = 0
         for i in range(batch_size):
             n_nodes = nodes_per_graph[i].item()
             graph_node_emb[i, :n_nodes] = node_emb[node_idx:node_idx + n_nodes]
+            graph_mask[i, :n_nodes] = False
+            # Ensure at least 2 valid nodes to avoid single-element softmax instability
+            if n_nodes == 1 and max_nodes > 1:
+                graph_mask[i, 1] = False
             node_idx += n_nodes
         
-        return question_seq, question_pooled, graph_node_emb, graph_pooled
+        return question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask
     
     def forward(
         self,
@@ -204,49 +247,92 @@ class KGPathDiffusionModel(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Training forward pass (single path mode for backward compatibility).
-        
-        Args:
-            question_input_ids: [B, seq_len]
-            question_attention_mask: [B, seq_len]
-            graph_batch: PyG Batch object
-            target_entities: [B, path_len]
-            target_relations: [B, path_len-1]
-            path_mask: [B, path_len] boolean mask (True for valid positions)
-        
-        Returns:
-            Dictionary with loss and metrics
         """
-        B = question_input_ids.shape[0]
-        device = question_input_ids.device
-        
         # Encode inputs
-        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch
+        # Extract node text features if available
+        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
+        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
+        
+        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
+            question_input_ids, question_attention_mask, graph_batch,
+            node_input_ids=node_input_ids,
+            node_attention_mask=node_attention_mask
         )
         
-        # Sample random timesteps
+        if self.path_generator_type == "diffusion":
+            return self._forward_diffusion_single(
+                question_seq,
+                question_attention_mask,
+                graph_node_emb,
+                target_entities,
+                target_relations,
+                target_entities,
+                target_relations,
+                path_mask,
+                graph_mask
+            )
+        else:
+            return self._forward_flow_single(
+                question_seq,
+                question_attention_mask,
+                graph_node_emb,
+                target_entities,
+                target_relations,
+                path_mask
+            )
+
+    def _forward_diffusion_single(
+        self,
+        question_seq: torch.Tensor,
+        question_attention_mask: torch.Tensor,
+        graph_node_emb: torch.Tensor,
+        target_entities: torch.Tensor,
+        target_relations: torch.Tensor,
+
+        path_mask: Optional[torch.Tensor],
+        graph_mask: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]:
+        B = question_seq.shape[0]
+        device = question_seq.device
         t = torch.randint(0, self.diffusion.num_timesteps, (B,), device=device)
-        
-        # Add noise to target paths
         noisy_entities, noisy_relations = self.diffusion.q_sample(
             target_entities, target_relations, t
         )
         
-        # Predict clean paths
+        # If not predicting entities, pass None for noisy_entities to denoiser
+        denoiser_entities = noisy_entities if self.predict_entities else None
+        
         entity_logits, relation_logits = self.denoiser(
-            noisy_entities, noisy_relations, t,
+            denoiser_entities, noisy_relations, t,
             question_seq, graph_node_emb,
             path_mask=path_mask,
-            question_mask=~question_attention_mask.bool()
+            question_mask=~question_attention_mask.bool(),
+            graph_mask=graph_mask
         )
-        
-        # Compute loss
         losses = self.diffusion.compute_loss(
             entity_logits, relation_logits,
             target_entities, target_relations,
             path_mask=path_mask
         )
-        
+        return losses
+
+    def _forward_flow_single(
+        self,
+        question_seq: torch.Tensor,
+        question_attention_mask: torch.Tensor,
+        graph_node_emb: torch.Tensor,
+        target_entities: torch.Tensor,
+        target_relations: torch.Tensor,
+        path_mask: Optional[torch.Tensor]
+    ) -> Dict[str, torch.Tensor]:
+        losses = self.flow_generator(
+            target_entities,
+            target_relations,
+            question_seq,
+            graph_node_emb,
+            path_mask=path_mask,
+            question_mask=~question_attention_mask.bool()
+        )
         return losses
     
     def forward_multipath(
@@ -261,21 +347,6 @@ class KGPathDiffusionModel(nn.Module):
     ) -> Dict[str, torch.Tensor]:
         """
         Multi-path training forward pass.
-        
-        Trains the model on ALL diverse paths, not just one.
-        The loss is computed over all valid paths and averaged.
-        
-        Args:
-            question_input_ids: [B, seq_len]
-            question_attention_mask: [B, seq_len]
-            graph_batch: PyG Batch object
-            all_target_entities: [B, max_paths, path_len]
-            all_target_relations: [B, max_paths, path_len-1]
-            all_path_lengths: [B, max_paths] - actual length of each path
-            num_paths: [B] - number of valid paths per sample
-        
-        Returns:
-            Dictionary with loss and metrics
         """
         B = question_input_ids.shape[0]
         max_paths = all_target_entities.shape[1]
@@ -284,8 +355,13 @@ class KGPathDiffusionModel(nn.Module):
         device = question_input_ids.device
         
         # Encode inputs once (shared across all paths)
-        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch
+        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
+        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
+        
+        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
+            question_input_ids, question_attention_mask, graph_batch,
+            node_input_ids=node_input_ids,
+            node_attention_mask=node_attention_mask
         )
         
         # Expand encoded inputs for all paths
@@ -298,70 +374,214 @@ class KGPathDiffusionModel(nn.Module):
         
         question_mask_expanded = (~question_attention_mask.bool()).unsqueeze(1).expand(-1, max_paths, -1)
         question_mask_expanded = question_mask_expanded.reshape(B * max_paths, -1)
+
+        graph_mask_expanded = graph_mask.unsqueeze(1).expand(-1, max_paths, -1)
+        graph_mask_expanded = graph_mask_expanded.reshape(B * max_paths, -1)
         
         # Flatten paths: [B, max_paths, path_len] -> [B * max_paths, path_len]
         flat_entities = all_target_entities.reshape(B * max_paths, path_len)
         flat_relations = all_target_relations.reshape(B * max_paths, rel_len)
         flat_lengths = all_path_lengths.reshape(B * max_paths)
         
-        # Create path mask based on lengths (for entities)
+        # Create path mask based on lengths (for entities including BOS/EOS)
         path_mask = torch.arange(path_len, device=device).unsqueeze(0) < flat_lengths.unsqueeze(1)
         
-        # Create relation mask (relations are one less than entities, but respect rel_len)
-        # For a path of length L, there are L-1 relations
-        rel_lengths = (flat_lengths - 1).clamp(min=0)  # Ensure non-negative
+        # Create relation mask
+        # Path structure: [BOS, e1, r1, e2, r2, ..., en, EOS]
+        # If path_length is L (including BOS and EOS), then:
+        # - Number of entities WITH BOS/EOS: L
+        # - Number of entities WITHOUT BOS/EOS: L - 2
+        # - Number of relations: (L - 2) - 1 = L - 3 for L >= 3
+        # For a path [BOS, e1, r1, e2, EOS], length=5, we have 1 relation r1
+        # rel_lengths should be: flat_lengths - 3 (for L >= 3), else 0
+        rel_lengths = (flat_lengths - 3).clamp(min=0)  # Subtract 3: BOS, EOS, and 1 for the fact that n entities have n-1 relations
+       
+        # Clamp rel_lengths to not exceed the actual relation tensor length
+        rel_lengths = rel_lengths.clamp(max=rel_len)
+        
+        # Create relation mask: True for valid relations, False for padding
         relation_mask = torch.arange(rel_len, device=device).unsqueeze(0) < rel_lengths.unsqueeze(1)
         
         # Create valid path mask (to ignore padding paths)
         valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
         valid_path_mask_flat = valid_path_mask.reshape(B * max_paths)
         
-        # Sample random timesteps (same for all paths in a batch)
-        t = torch.randint(0, self.diffusion.num_timesteps, (B,), device=device)
-        t_expanded = t.unsqueeze(1).expand(-1, max_paths).reshape(B * max_paths)
+        # Add debug checks to catch NaN cases
+        if torch.isnan(flat_entities).any() or torch.isnan(flat_relations).any():
+            print(f"Warning: NaN detected in input tensors!")
+            print(f"flat_entities has NaN: {torch.isnan(flat_entities).any()}")
+            print(f"flat_relations has NaN: {torch.isnan(flat_relations).any()}")
         
-        # Add noise to all target paths
+        if self.path_generator_type == "diffusion":
+            return self._forward_diffusion_multipath(
+                question_seq_expanded,
+                graph_node_emb_expanded,
+                flat_entities,
+                flat_relations,
+                path_mask,
+                relation_mask,
+                valid_path_mask_flat,
+                question_mask_expanded,
+                graph_mask_expanded,
+                B,
+                max_paths,
+                num_paths
+            )
+        else:
+            return self._forward_flow_multipath(
+                question_seq_expanded,
+                graph_node_emb_expanded,
+                flat_entities,
+                flat_relations,
+                path_mask,
+                valid_path_mask_flat,
+                question_mask_expanded,
+                B,
+                max_paths,
+                num_paths
+            )
+
+    def _forward_diffusion_multipath(
+        self,
+        question_seq: torch.Tensor,
+        graph_node_emb: torch.Tensor,
+        flat_entities: torch.Tensor,
+        flat_relations: torch.Tensor,
+        path_mask: torch.Tensor,
+        relation_mask: torch.Tensor,
+        valid_path_mask: torch.Tensor,
+        question_mask: torch.Tensor,
+        graph_mask: torch.Tensor,
+        batch_size: int,
+        max_paths: int,
+        num_paths: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        device = question_seq.device
+        t = torch.randint(0, self.diffusion.num_timesteps, (batch_size,), device=device)
+        t_expanded = t.unsqueeze(1).expand(-1, max_paths).reshape(batch_size * max_paths)
         noisy_entities, noisy_relations = self.diffusion.q_sample(
             flat_entities, flat_relations, t_expanded
         )
         
-        # Predict clean paths for all
+        # If not predicting entities, pass None for noisy_entities to denoiser
+        denoiser_entities = noisy_entities if self.predict_entities else None
+        
+        # Create proper path mask for denoiser
+        # For relation-only mode, we need to pass a mask that matches the relation sequence length
+        if self.predict_entities:
+            # Entity+relation mode: pass full path_mask
+            denoiser_path_mask = path_mask
+        else:
+            # Relation-only mode: create mask from relation_mask
+            # The denoiser expects path_mask to derive relation mask, but we have relation_mask directly
+            # So we create a dummy path_mask that will be used to derive the correct relation mask
+            # path_mask is [B, path_len], relation_mask is [B, rel_len]
+            # In relation-only mode, denoiser uses path_mask[:, :-1] to get relation mask
+            # So we need to ensure path_mask has the right shape
+            # Create a path_mask where the relation part matches our relation_mask
+            # We'll create path_mask with shape [B, rel_len + 1] so that path_mask[:, :-1] = relation_mask
+            denoiser_path_mask = torch.ones(relation_mask.shape[0], relation_mask.shape[1] + 1, 
+                                            dtype=torch.bool, device=device)
+            denoiser_path_mask[:, :-1] = ~relation_mask  # Invert: True = padding, False = valid
+        
         entity_logits, relation_logits = self.denoiser(
-            noisy_entities, noisy_relations, t_expanded,
-            question_seq_expanded, graph_node_emb_expanded,
-            path_mask=path_mask,
-            question_mask=question_mask_expanded
+            denoiser_entities, noisy_relations, t_expanded,
+            question_seq, graph_node_emb,
+            path_mask=denoiser_path_mask,
+            question_mask=question_mask,
+            # Disable graph_mask to prevent NaN gradients caused by single-element attention instability
+            graph_mask=None
         )
         
-        # Compute loss per path
+        # Check for NaN in outputs before computing loss
+        if torch.isnan(relation_logits).any():
+            print(f"Warning: NaN detected in relation_logits after denoiser!")
+            print(f"  relation_logits shape: {relation_logits.shape}")
+            print(f"  relation_logits stats: min={relation_logits.min()}, max={relation_logits.max()}, mean={relation_logits.mean()}")
+            # Replace NaN with zeros to prevent propagation
+            relation_logits = torch.where(torch.isnan(relation_logits), 
+                                         torch.zeros_like(relation_logits), 
+                                         relation_logits)
+        
+        if entity_logits is not None and torch.isnan(entity_logits).any():
+            print(f"Warning: NaN detected in entity_logits after denoiser!")
+            entity_logits = torch.where(torch.isnan(entity_logits), 
+                                       torch.zeros_like(entity_logits), 
+                                       entity_logits)
+        
         losses_per_path = self._compute_loss_per_path(
             entity_logits, relation_logits,
             flat_entities, flat_relations,
-            path_mask, relation_mask, valid_path_mask_flat
+            path_mask, relation_mask, valid_path_mask
         )
+        losses_per_path = losses_per_path.reshape(batch_size, max_paths)
+        valid_mask = valid_path_mask.reshape(batch_size, max_paths).float()
+        losses_per_path = losses_per_path * valid_mask
         
-        # Reshape losses: [B * max_paths] -> [B, max_paths]
-        losses_per_path = losses_per_path.reshape(B, max_paths)
+        # Compute average loss per sample, handling edge cases
+        num_paths_float = num_paths.float().clamp(min=1)
+        sample_losses = losses_per_path.sum(dim=1) / num_paths_float
         
-        # Mask out invalid paths and compute mean loss per sample
-        losses_per_path = losses_per_path * valid_path_mask.float()
+        # Check for NaN before taking mean
+        if torch.isnan(sample_losses).any():
+            print(f"Warning: NaN detected in sample_losses!")
+            print(f"  sample_losses: {sample_losses}")
+            print(f"  losses_per_path: {losses_per_path}")
+            print(f"  num_paths: {num_paths}")
+            # Replace NaN with 0
+            sample_losses = torch.where(torch.isnan(sample_losses), 
+                                       torch.zeros_like(sample_losses), 
+                                       sample_losses)
         
-        # Average over valid paths
-        sample_losses = losses_per_path.sum(dim=1) / num_paths.float().clamp(min=1)
-        
-        # Final loss is mean over batch
         total_loss = sample_losses.mean()
         
+        # Final NaN check
+        if torch.isnan(total_loss):
+            print(f"Warning: NaN in total_loss! Replacing with 0.")
+            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         return {
             'loss': total_loss,
-            'entity_loss': total_loss * 0.5,  # Approximate split
-            'relation_loss': total_loss * 0.5,
+            'entity_loss': total_loss * 0.5 if self.predict_entities else torch.tensor(0.0, device=device),
+            'relation_loss': total_loss * 0.5 if self.predict_entities else total_loss,
             'num_paths_avg': num_paths.float().mean()
         }
+
+    def _forward_flow_multipath(
+        self,
+        question_seq: torch.Tensor,
+        graph_node_emb: torch.Tensor,
+        flat_entities: torch.Tensor,
+        flat_relations: torch.Tensor,
+        path_mask: torch.Tensor,
+        valid_path_mask: torch.Tensor,
+        question_mask: torch.Tensor,
+        batch_size: int,
+        max_paths: int,
+        num_paths: torch.Tensor
+    ) -> Dict[str, torch.Tensor]:
+        if valid_path_mask.sum() == 0:
+            zero = torch.tensor(0.0, device=question_seq.device)
+            return {
+                'loss': zero,
+                'entity_loss': zero,
+                'relation_loss': zero,
+                'num_paths_avg': num_paths.float().mean()
+            }
+        selected = valid_path_mask.bool()
+        outputs = self.flow_generator(
+            flat_entities[selected],
+            flat_relations[selected],
+            question_seq[selected],
+            graph_node_emb[selected],
+            path_mask=path_mask[selected],
+            question_mask=question_mask[selected]
+        )
+        outputs['num_paths_avg'] = num_paths.float().mean()
+        return outputs
     
     def _compute_loss_per_path(
         self,
-        entity_logits: torch.Tensor,
+        entity_logits: Optional[torch.Tensor],
         relation_logits: torch.Tensor,
         target_entities: torch.Tensor,
         target_relations: torch.Tensor,
@@ -370,39 +590,78 @@ class KGPathDiffusionModel(nn.Module):
         valid_mask: torch.Tensor
     ) -> torch.Tensor:
         """Compute loss for each path individually."""
-        B_flat = entity_logits.shape[0]
-        device = entity_logits.device
+        B_flat = relation_logits.shape[0]
+        device = relation_logits.device
         
         losses = torch.zeros(B_flat, device=device)
+        
+        # Debug: Check for NaNs in inputs
+        if torch.isnan(relation_logits).any():
+            print(f"NaN detected in relation_logits! Max: {relation_logits.max()}, Min: {relation_logits.min()}")
         
         for i in range(B_flat):
             if not valid_mask[i]:
                 continue
             
-            # Get valid positions for this path
-            e_mask = path_mask[i]
+            # Relation loss
             r_mask = relation_mask[i]
+            if r_mask.sum() == 0:
+                # No valid relations in this path (e.g., path is too short)
+                # Ensure gradient flow even if loss is 0, but avoid NaN propagation
+                r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            else:
+                r_logits = relation_logits[i][r_mask]
+                r_targets = target_relations[i][r_mask]
+                
+                # Check for invalid targets (out of bounds or padding)
+                valid_targets = (r_targets >= 0) & (r_targets < relation_logits.shape[-1]) & (r_targets != 0)
+                if not valid_targets.any():
+                    # All targets are invalid/padding, skip this path
+                    r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                elif r_logits.numel() > 0 and valid_targets.sum() > 0:
+                    # Only compute loss on valid targets
+                    valid_r_logits = r_logits[valid_targets]
+                    valid_r_targets = r_targets[valid_targets]
+                    r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
+                    # Check for NaN
+                    if torch.isnan(r_loss):
+                        print(f"Warning: NaN in relation loss for path {i}")
+                        r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                else:
+                    r_loss = torch.tensor(0.0, device=device, requires_grad=True)
             
             # Entity loss
-            e_logits = entity_logits[i][e_mask]
-            e_targets = target_entities[i][e_mask]
-            if e_logits.numel() > 0:
-                e_loss = F.cross_entropy(e_logits, e_targets, ignore_index=0, reduction='mean')
+            if entity_logits is not None:
+                e_mask = path_mask[i]
+                if e_mask.sum() == 0:
+                    e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                else:
+                    e_logits = entity_logits[i][e_mask]
+                    e_targets = target_entities[i][e_mask]
+                    
+                    # Check for invalid targets (out of bounds or padding)
+                    valid_targets = (e_targets >= 0) & (e_targets < entity_logits.shape[-1]) & (e_targets != 0)
+                    if not valid_targets.any():
+                        # All targets are invalid/padding, skip this path
+                        e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    elif e_logits.numel() > 0 and valid_targets.sum() > 0:
+                        # Only compute loss on valid targets
+                        valid_e_logits = e_logits[valid_targets]
+                        valid_e_targets = e_targets[valid_targets]
+                        e_loss = F.cross_entropy(valid_e_logits, valid_e_targets, reduction='mean')
+                        # Check for NaN
+                        if torch.isnan(e_loss):
+                            print(f"Warning: NaN in entity loss for path {i}")
+                            e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    else:
+                        e_loss = torch.tensor(0.0, device=device, requires_grad=True)
             else:
-                e_loss = torch.tensor(0.0, device=device)
-            
-            # Relation loss (use relation_mask directly)
-            r_logits = relation_logits[i][r_mask]
-            r_targets = target_relations[i][r_mask]
-            if r_logits.numel() > 0:
-                r_loss = F.cross_entropy(r_logits, r_targets, ignore_index=0, reduction='mean')
-            else:
-                r_loss = torch.tensor(0.0, device=device)
+                e_loss = torch.tensor(0.0, device=device, requires_grad=True)
             
             losses[i] = e_loss + r_loss
-        
+            
         return losses
-    
+
     @torch.no_grad()
     def generate(
         self,
@@ -420,18 +679,32 @@ class KGPathDiffusionModel(nn.Module):
             relations: [B, path_length-1]
         """
         # Encode inputs
-        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch
+        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
+        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
+        
+        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
+            question_input_ids, question_attention_mask, graph_batch,
+            node_input_ids=node_input_ids,
+            node_attention_mask=node_attention_mask
         )
         
-        # Generate via diffusion sampling
-        entities, relations = self.diffusion.sample(
-            self.denoiser,
-            question_seq, graph_node_emb,
-            path_length=path_length,
-            question_mask=~question_attention_mask.bool(),
-            temperature=temperature
-        )
+        question_mask = ~question_attention_mask.bool()
+        
+        if self.path_generator_type == "diffusion":
+            entities, relations = self.diffusion.sample(
+                self.denoiser,
+                question_seq, graph_node_emb,
+                path_length=path_length,
+                question_mask=question_mask,
+                temperature=temperature
+            )
+        else:
+            entities, relations = self.flow_generator.sample(
+                question_seq, graph_node_emb,
+                path_length=path_length,
+                question_mask=question_mask,
+                temperature=temperature
+            )
         
         return entities, relations
     
@@ -469,7 +742,7 @@ class KGPathDiffusionModel(nn.Module):
         device = question_input_ids.device
         
         # Encode inputs once
-        question_seq, question_pooled, graph_node_emb, graph_pooled = self.encode_inputs(
+        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
             question_input_ids, question_attention_mask, graph_batch
         )
         
@@ -489,13 +762,21 @@ class KGPathDiffusionModel(nn.Module):
                 curr_temp = temperature
             
             # Generate one path
-            entities, relations = self.diffusion.sample(
-                self.denoiser,
-                question_seq, graph_node_emb,
-                path_length=path_length,
-                question_mask=~question_attention_mask.bool(),
-                temperature=curr_temp
-            )
+            if self.path_generator_type == "diffusion":
+                entities, relations = self.diffusion.sample(
+                    self.denoiser,
+                    question_seq, graph_node_emb,
+                    path_length=path_length,
+                    question_mask=~question_attention_mask.bool(),
+                    temperature=curr_temp
+                )
+            else:
+                entities, relations = self.flow_generator.sample(
+                    question_seq, graph_node_emb,
+                    path_length=path_length,
+                    question_mask=~question_attention_mask.bool(),
+                    temperature=curr_temp
+                )
             
             all_entities.append(entities)
             all_relations.append(relations)
@@ -543,7 +824,12 @@ class KGPathDiffusionLightning(pl.LightningModule):
         weight_decay: float = 0.01,
         warmup_steps: int = 1000,
         max_steps: int = 100000,
-        use_multipath_training: bool = True  # Enable multi-path training
+        use_multipath_training: bool = True,
+        path_generator_type: str = "diffusion",
+        flow_integration_steps: int = 32,
+        flow_ce_weight: float = 0.1,
+        use_entity_embeddings: bool = True,
+        predict_entities: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -560,7 +846,12 @@ class KGPathDiffusionLightning(pl.LightningModule):
             num_heads=num_heads,
             num_diffusion_steps=num_diffusion_steps,
             max_path_length=max_path_length,
-            dropout=dropout
+            dropout=dropout,
+            path_generator_type=path_generator_type,
+            flow_integration_steps=flow_integration_steps,
+            flow_ce_weight=flow_ce_weight,
+            use_entity_embeddings=use_entity_embeddings,
+            predict_entities=predict_entities
         )
         
         self.learning_rate = learning_rate
