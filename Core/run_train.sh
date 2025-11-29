@@ -10,7 +10,7 @@ set -e
 
 # Default conda environment and config
 # CONDA_ENV="${1:-Wu}"
-# CONFIG_PATH="${2:-./configs/flow_matching_base.yaml}"
+CONFIG_PATH="${2:-./configs/diffusion.yaml}"
 
 # echo "Config File    : $CONFIG_PATH"
 # echo "============================================================"
