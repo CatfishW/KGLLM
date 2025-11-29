@@ -143,7 +143,7 @@ class PathDiffusionTransformer(nn.Module):
     Transformer-based denoising network for discrete path diffusion.
     
     Takes noisy path tokens and predicts the clean path.
-    Conditioned on: question encoding, graph encoding, timestep.
+    Conditioned on: question encoding, timestep.
     """
     
     def __init__(
@@ -153,8 +153,7 @@ class PathDiffusionTransformer(nn.Module):
         hidden_dim: int = 256,
         num_layers: int = 6,
         num_heads: int = 8,
-        question_dim: int = 384,  # Dimension of question encoder output
-        graph_dim: int = 256,  # Dimension of graph encoder output
+        question_dim: int = 256,  # Dimension of question encoder output
         max_path_length: int = 20,
         dropout: float = 0.1,
         predict_entities: bool = True
@@ -193,17 +192,15 @@ class PathDiffusionTransformer(nn.Module):
             nn.Linear(hidden_dim * 4, hidden_dim)
         )
         
-        # Project question and graph to hidden_dim
+        # Project question to hidden_dim
         self.question_proj = nn.Linear(question_dim, hidden_dim)
-        self.graph_proj = nn.Linear(graph_dim, hidden_dim)
         
         # Transformer blocks with cross-attention
         self.blocks = nn.ModuleList()
         for _ in range(num_layers):
             self.blocks.append(nn.ModuleDict({
                 'self_attn': PathTransformerBlock(hidden_dim, num_heads, dropout=dropout),
-                'cross_attn_q': CrossAttentionBlock(hidden_dim, hidden_dim, num_heads, dropout),
-                'cross_attn_g': CrossAttentionBlock(hidden_dim, hidden_dim, num_heads, dropout)
+                'cross_attn_q': CrossAttentionBlock(hidden_dim, hidden_dim, num_heads, dropout)
             }))
         
         # Output heads
@@ -222,10 +219,8 @@ class PathDiffusionTransformer(nn.Module):
         noisy_relations: torch.Tensor,  # [B, L-1]
         timesteps: torch.Tensor,  # [B]
         question_encoding: torch.Tensor,  # [B, seq_len, question_dim]
-        graph_node_encoding: torch.Tensor,  # [B, num_nodes, graph_dim]
         path_mask: Optional[torch.Tensor] = None,  # [B, L]
-        question_mask: Optional[torch.Tensor] = None,
-        graph_mask: Optional[torch.Tensor] = None
+        question_mask: Optional[torch.Tensor] = None
     ) -> Tuple[Optional[torch.Tensor], torch.Tensor]:
         """
         Predict clean path from noisy path.
@@ -293,13 +288,11 @@ class PathDiffusionTransformer(nn.Module):
         
         # Project context
         question_ctx = self.question_proj(question_encoding)
-        graph_ctx = self.graph_proj(graph_node_encoding)
         
         # Apply transformer blocks
         for block in self.blocks:
             x = block['self_attn'](x, time_emb, key_padding_mask=seq_mask)
             x = block['cross_attn_q'](x, question_ctx, context_mask=question_mask)
-            x = block['cross_attn_g'](x, graph_ctx, context_mask=graph_mask)
         
         x = self.norm_out(x)
         
@@ -356,9 +349,10 @@ class DiscreteDiffusion(nn.Module):
         self.register_buffer('alphas', alphas)
         self.register_buffer('alpha_cumprod', alpha_cumprod)
         
-        # Mask token indices (using the last index in vocab)
-        self.entity_mask_idx = num_entities - 1
-        self.relation_mask_idx = num_relations - 1
+        # Mask token indices (from vocab: entity MASK=4, relation MASK=2)
+        # These are fixed indices based on EntityRelationVocab definition
+        self.entity_mask_idx = 4  # "<MASK>" token index for entities
+        self.relation_mask_idx = 2  # "<MASK>" token index for relations
     
     def q_sample(
         self,
@@ -404,7 +398,7 @@ class DiscreteDiffusion(nn.Module):
         relation_logits_flat = relation_logits.view(-1, self.num_relations).float()
         target_relations_flat = target_relations.view(-1)
         
-        def _safe_cross_entropy(logits, targets, mask=None):
+        def _safe_cross_entropy(logits, targets, mask=None, ignore_indices=None):
             """Compute CE that gracefully handles the all-masked case."""
             if mask is not None:
                 mask = mask.bool()
@@ -412,13 +406,33 @@ class DiscreteDiffusion(nn.Module):
                     return logits.new_zeros(())
                 logits = logits[mask]
                 targets = targets[mask]
-            return F.cross_entropy(logits, targets, ignore_index=0)
+            
+            # Ignore padding (0) and mask tokens (2 for relations, 4 for entities)
+            if ignore_indices is None:
+                ignore_indices = [0]  # Default: only ignore padding
+            # Filter out ignored indices from targets
+            valid_mask = torch.ones_like(targets, dtype=torch.bool)
+            for idx in ignore_indices:
+                valid_mask = valid_mask & (targets != idx)
+            
+            if not valid_mask.any():
+                return logits.new_zeros(())
+            
+            logits = logits[valid_mask]
+            targets = targets[valid_mask]
+            return F.cross_entropy(logits, targets)
         
         if path_mask is not None:
             relation_mask_flat = path_mask[:, :-1].reshape(-1)
-            relation_loss = _safe_cross_entropy(relation_logits_flat, target_relations_flat, relation_mask_flat)
+            relation_loss = _safe_cross_entropy(
+                relation_logits_flat, target_relations_flat, relation_mask_flat,
+                ignore_indices=[0, 2]  # Ignore PAD (0) and MASK (2)
+            )
         else:
-            relation_loss = _safe_cross_entropy(relation_logits_flat, target_relations_flat)
+            relation_loss = _safe_cross_entropy(
+                relation_logits_flat, target_relations_flat,
+                ignore_indices=[0, 2]  # Ignore PAD (0) and MASK (2)
+            )
             
         if entity_logits is not None:
             entity_logits_flat = entity_logits.view(-1, self.num_entities).float()
@@ -426,9 +440,15 @@ class DiscreteDiffusion(nn.Module):
             
             if path_mask is not None:
                 entity_mask_flat = path_mask.view(-1)
-                entity_loss = _safe_cross_entropy(entity_logits_flat, target_entities_flat, entity_mask_flat)
+                entity_loss = _safe_cross_entropy(
+                    entity_logits_flat, target_entities_flat, entity_mask_flat,
+                    ignore_indices=[0, 4]  # Ignore PAD (0) and MASK (4)
+                )
             else:
-                entity_loss = _safe_cross_entropy(entity_logits_flat, target_entities_flat)
+                entity_loss = _safe_cross_entropy(
+                    entity_logits_flat, target_entities_flat,
+                    ignore_indices=[0, 4]  # Ignore PAD (0) and MASK (4)
+                )
         else:
             entity_loss = torch.tensor(0.0, device=relation_logits.device)
         
@@ -445,10 +465,8 @@ class DiscreteDiffusion(nn.Module):
         self,
         denoiser: PathDiffusionTransformer,
         question_encoding: torch.Tensor,
-        graph_node_encoding: torch.Tensor,
         path_length: int,
         question_mask: Optional[torch.Tensor] = None,
-        graph_mask: Optional[torch.Tensor] = None,
         temperature: float = 1.0
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
@@ -460,7 +478,12 @@ class DiscreteDiffusion(nn.Module):
         device = question_encoding.device
         
         # Start with fully masked sequence
-        entities = torch.full((B, path_length), self.entity_mask_idx, device=device)
+        # Only initialize entities if we're predicting them
+        if denoiser.predict_entities:
+            entities = torch.full((B, path_length), self.entity_mask_idx, device=device)
+        else:
+            # If not predicting entities, use a dummy tensor (will be ignored)
+            entities = torch.zeros((B, path_length), dtype=torch.long, device=device)
         relations = torch.full((B, path_length - 1), self.relation_mask_idx, device=device)
         
         # Iteratively denoise
@@ -472,21 +495,60 @@ class DiscreteDiffusion(nn.Module):
                 entities if denoiser.predict_entities else None, 
                 relations, 
                 t_batch,
-                question_encoding, graph_node_encoding,
-
-                question_mask=question_mask,
-                graph_mask=graph_mask
+                question_encoding,
+                question_mask=question_mask
             )
+            
+            # Check and fix NaN/inf in logits
+            if torch.isnan(relation_logits).any() or torch.isinf(relation_logits).any():
+                relation_logits = torch.where(
+                    torch.isnan(relation_logits) | torch.isinf(relation_logits),
+                    torch.zeros_like(relation_logits),
+                    relation_logits
+                )
+            
+            if entity_logits is not None:
+                if torch.isnan(entity_logits).any() or torch.isinf(entity_logits).any():
+                    entity_logits = torch.where(
+                        torch.isnan(entity_logits) | torch.isinf(entity_logits),
+                        torch.zeros_like(entity_logits),
+                        entity_logits
+                    )
             
             # Sample from predictions (with temperature)
             if temperature > 0:
-                relation_probs = F.softmax(relation_logits / temperature, dim=-1)
+                # Clamp logits to prevent numerical instability
+                relation_logits_clamped = torch.clamp(relation_logits, min=-50.0, max=50.0)
+                
+                relation_probs = F.softmax(relation_logits_clamped / temperature, dim=-1)
+                
+                # Check for NaN or inf and replace with uniform distribution if needed
+                if torch.isnan(relation_probs).any() or torch.isinf(relation_probs).any():
+                    # Fall back to uniform distribution if probabilities are invalid
+                    relation_probs = torch.ones_like(relation_probs) / self.num_relations
+                
+                # Ensure probabilities are valid (non-negative, sum to 1)
+                relation_probs = torch.clamp(relation_probs, min=1e-8, max=1.0)
+                relation_probs = relation_probs / relation_probs.sum(dim=-1, keepdim=True)
+                
                 relation_samples = torch.multinomial(
                     relation_probs.view(-1, self.num_relations), 1
                 ).view(B, path_length - 1)
                 
                 if entity_logits is not None:
-                    entity_probs = F.softmax(entity_logits / temperature, dim=-1)
+                    # Clamp logits to prevent numerical instability
+                    entity_logits_clamped = torch.clamp(entity_logits, min=-50.0, max=50.0)
+                    entity_probs = F.softmax(entity_logits_clamped / temperature, dim=-1)
+                    
+                    # Check for NaN or inf and replace with uniform distribution if needed
+                    if torch.isnan(entity_probs).any() or torch.isinf(entity_probs).any():
+                        # Fall back to uniform distribution if probabilities are invalid
+                        entity_probs = torch.ones_like(entity_probs) / self.num_entities
+                    
+                    # Ensure probabilities are valid (non-negative, sum to 1)
+                    entity_probs = torch.clamp(entity_probs, min=1e-8, max=1.0)
+                    entity_probs = entity_probs / entity_probs.sum(dim=-1, keepdim=True)
+                    
                     entity_samples = torch.multinomial(
                         entity_probs.view(-1, self.num_entities), 1
                     ).view(B, path_length)
@@ -519,6 +581,24 @@ class DiscreteDiffusion(nn.Module):
                 relations = relation_samples
                 if entity_logits is not None:
                     entities = entity_samples
+        
+        # If not predicting entities, return empty entities (all zeros)
+        if not denoiser.predict_entities:
+            entities = torch.zeros_like(entities)
+        
+        # Post-process: trim padding and stop at PAD tokens
+        # PAD token index is 0 for both entities and relations
+        pad_idx = 0
+        
+        # For relations: find first PAD token and trim
+        for b in range(B):
+            rel_seq = relations[b]
+            # Find first PAD token
+            pad_positions = (rel_seq == pad_idx).nonzero(as_tuple=True)[0]
+            if len(pad_positions) > 0:
+                # Trim at first PAD
+                first_pad = pad_positions[0].item()
+                relations[b, first_pad:] = pad_idx
         
         return entities, relations
 

@@ -31,6 +31,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.dataset import KGPathDataModule
 from kg_path_diffusion import KGPathDiffusionLightning
+from callbacks.path_examples_logger import PathExamplesLogger
 
 DEFAULTS = {
     'train_data': None,
@@ -38,16 +39,11 @@ DEFAULTS = {
     'test_data': None,
     'vocab_path': None,
     'hidden_dim': 128,
-    'num_graph_layers': 3,
     'num_diffusion_layers': 6,
     'num_heads': 8,
     'num_diffusion_steps': 1000,
-    'path_generator_type': 'diffusion',
-    'flow_integration_steps': 32,
-    'flow_ce_weight': 0.1,
     'max_path_length': 20,
     'dropout': 0.1,
-    'graph_encoder': 'hybrid',
     'question_encoder': 'sentence-transformers/all-MiniLM-L6-v2',
     'tokenizer_name': None,
     'freeze_question_encoder': False,
@@ -55,7 +51,6 @@ DEFAULTS = {
     'max_entities': None,
     'max_relations': 50000,
     'max_question_length': 64,
-    'max_graph_nodes': 200,
 
     'batch_size': 32,
     'num_workers': 4,
@@ -152,28 +147,16 @@ def parse_args():
     # Model arguments
     parser.add_argument('--hidden_dim', type=int, default=128,
                         help='Hidden dimension size')
-    parser.add_argument('--num_graph_layers', type=int, default=3,
-                        help='Number of graph encoder layers')
     parser.add_argument('--num_diffusion_layers', type=int, default=6,
                         help='Number of transformer layers in the path generator')
     parser.add_argument('--num_heads', type=int, default=8,
                         help='Number of attention heads')
     parser.add_argument('--num_diffusion_steps', type=int, default=1000,
                         help='Number of diffusion timesteps')
-    parser.add_argument('--path_generator_type', type=str, default='diffusion',
-                        choices=['diffusion', 'flow_matching'],
-                        help='Generative backend used for path decoding')
-    parser.add_argument('--flow_integration_steps', type=int, default=32,
-                        help='Euler steps used when sampling with flow matching')
-    parser.add_argument('--flow_ce_weight', type=float, default=0.1,
-                        help='Auxiliary CE coefficient for flow matching stability')
     parser.add_argument('--max_path_length', type=int, default=20,
                         help='Maximum path length')
     parser.add_argument('--dropout', type=float, default=0.1,
                         help='Dropout rate')
-    parser.add_argument('--graph_encoder', type=str, default='hybrid',
-                        choices=['rgcn', 'transformer', 'hybrid'],
-                        help='Type of graph encoder')
     parser.add_argument('--question_encoder', type=str, 
                         default='sentence-transformers/all-MiniLM-L6-v2',
                         help='Pretrained question encoder model')
@@ -189,8 +172,6 @@ def parse_args():
                         help='Maximum unique relations to keep')
     parser.add_argument('--max_question_length', type=int, default=64,
                         help='Maximum question tokens for tokenizer')
-    parser.add_argument('--max_graph_nodes', type=int, default=200,
-                        help='Maximum nodes retained per local graph')
 
     parser.add_argument('--use_entity_embeddings', type=lambda x: (str(x).lower() == 'true'), default=True,
                         help='Whether to use learnable entity embeddings')
@@ -301,18 +282,12 @@ def main():
     print(f"Vocab path: {args.vocab_path if args.vocab_path else '(will build from train data)'}")
     print(f"Batch size: {args.batch_size}")
     print(f"Hidden dim: {args.hidden_dim}")
-    print(f"Graph encoder: {args.graph_encoder} ({args.num_graph_layers} layers)")
     print(f"Path transformer layers: {args.num_diffusion_layers} | heads: {args.num_heads} | dropout: {args.dropout}")
     print(f"Question encoder: {args.question_encoder} | tokenizer: {tokenizer_name}")
-    print(f"Max question len: {args.max_question_length} | max path len: {args.max_path_length} | max graph nodes: {args.max_graph_nodes}")
+    print(f"Max question len: {args.max_question_length} | max path len: {args.max_path_length}")
     print(f"Max vocab: entities {max_entities} | relations {args.max_relations}")
-
-    print(f"Path generator: {args.path_generator_type}")
     print(f"Precision: {args.precision}")
     print("="*60)
-    if args.path_generator_type == 'flow_matching':
-        print(f"Flow integration steps: {args.flow_integration_steps}")
-        print(f"Flow CE weight: {args.flow_ce_weight}")
     
     # Create data module
     print("\nSetting up data module...")
@@ -326,10 +301,8 @@ def main():
         tokenizer_name=tokenizer_name,
         max_question_length=args.max_question_length,
         max_path_length=args.max_path_length,
-        max_graph_nodes=args.max_graph_nodes,
         max_entities=max_entities,
-        max_relations=args.max_relations,
-        tokenize_nodes=not args.use_entity_embeddings
+        max_relations=args.max_relations
     )
     
     # Setup data to build vocabulary
@@ -353,8 +326,6 @@ def main():
         hidden_dim=args.hidden_dim,
         question_encoder_name=args.question_encoder,
         freeze_question_encoder=args.freeze_question_encoder,
-        graph_encoder_type=args.graph_encoder,
-        num_graph_layers=args.num_graph_layers,
         num_diffusion_layers=args.num_diffusion_layers,
         num_heads=args.num_heads,
         num_diffusion_steps=args.num_diffusion_steps,
@@ -364,9 +335,6 @@ def main():
         weight_decay=args.weight_decay,
         warmup_steps=args.warmup_steps,
         max_steps=args.max_steps,
-        path_generator_type=args.path_generator_type,
-        flow_integration_steps=args.flow_integration_steps,
-        flow_ce_weight=args.flow_ce_weight,
         use_entity_embeddings=args.use_entity_embeddings,
         predict_entities=args.predict_entities
     )
@@ -376,6 +344,19 @@ def main():
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
+    
+    # Load checkpoint if provided
+    if args.resume:
+        print(f"\nLoading checkpoint from {args.resume}...")
+        try:
+            stats = model.load_checkpoint(args.resume, strict=False)
+            print(f"Checkpoint loaded: {stats['loaded']} parameters loaded, "
+                  f"{stats['skipped']} skipped, {stats['missing']} missing")
+            if stats['missing'] > 0:
+                print(f"Missing parameters (first 10): {stats['missing_params']}")
+        except Exception as e:
+            print(f"Warning: Failed to load checkpoint: {e}")
+            print("Continuing with random initialization...")
     
     # Setup callbacks
     callbacks = [
@@ -401,6 +382,15 @@ def main():
                 monitor='val/loss',
                 patience=10,
                 mode='min'
+            )
+        )
+        # Add path examples logger to log predicted and ground truth relation paths
+        callbacks.append(
+            PathExamplesLogger(
+                num_examples=10,
+                log_dir=args.output_dir,
+                log_to_file=True,
+                log_to_tensorboard=True
             )
         )
     
@@ -432,6 +422,10 @@ def main():
         strategy = DDPStrategy(find_unused_parameters=True)
     else:
         strategy = args.strategy
+    
+    # Enable gradient checkpointing for memory efficiency (trades computation for memory)
+    if hasattr(model.model.question_encoder.encoder, 'gradient_checkpointing_enable'):
+        model.model.question_encoder.encoder.gradient_checkpointing_enable()
     
     # Create trainer
     trainer = pl.Trainer(

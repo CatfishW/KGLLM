@@ -57,24 +57,34 @@ def decode_path(
     entity_names = []
     relation_names = []
     
+    # Decode entities (skip if all zeros, which means predict_entities=False)
     for idx in entities.tolist():
+        if idx == 0:
+            # Skip zero entities (used when predict_entities=False)
+            continue
         name = vocab.idx2entity.get(idx, "<UNK>")
-        if name not in ["<PAD>", "<BOS>", "<EOS>", "<MASK>"]:
+        if name not in ["<PAD>", "<BOS>", "<EOS>", "<MASK>", "<UNK>"]:
             entity_names.append(name)
     
+    # Decode relations
     for idx in relations.tolist():
         name = vocab.idx2relation.get(idx, "<UNK>")
-        if name not in ["<PAD>", "<MASK>"]:
+        if name not in ["<PAD>", "<MASK>", "<UNK>"]:
             relation_names.append(name)
     
-    # Build path string: (entity1) --[relation1]--> (entity2) --[relation2]--> ...
-    path_parts = []
-    for i, entity in enumerate(entity_names):
-        path_parts.append(f"({entity})")
-        if i < len(relation_names):
-            path_parts.append(f" --[{relation_names[i]}]--> ")
-    
-    path_string = "".join(path_parts)
+    # Build path string
+    # If no entities (relation-only mode), just show relations
+    if not entity_names:
+        # Relation-only path: just show the relation chain
+        path_string = " -> ".join(relation_names) if relation_names else ""
+    else:
+        # Entity-relation path: (entity1) --[relation1]--> (entity2) --[relation2]--> ...
+        path_parts = []
+        for i, entity in enumerate(entity_names):
+            path_parts.append(f"({entity})")
+            if i < len(relation_names):
+                path_parts.append(f" --[{relation_names[i]}]--> ")
+        path_string = "".join(path_parts)
     
     return {
         "entities": entity_names,
@@ -102,6 +112,21 @@ def load_raw_data(data_path: str) -> Dict[str, Dict]:
                     raw_data[sample.get('id', '')] = sample
             else:
                 raw_data = data
+    elif path.suffix == '.parquet':
+        # Load parquet file
+        import pandas as pd
+        df = pd.read_parquet(path)
+        # Convert to dict format
+        for _, row in df.iterrows():
+            sample = row.to_dict()
+            # Handle JSON-encoded fields
+            for key in ['graph', 'paths', 'answer', 'q_entity', 'a_entity']:
+                if key in sample and isinstance(sample[key], str):
+                    try:
+                        sample[key] = json.loads(sample[key])
+                    except:
+                        pass
+            raw_data[sample.get('id', '')] = sample
     
     return raw_data
 
@@ -139,7 +164,6 @@ def generate_paths(
         # Move batch to device
         batch['question_input_ids'] = batch['question_input_ids'].to(device)
         batch['question_attention_mask'] = batch['question_attention_mask'].to(device)
-        batch['graph_batch'] = batch['graph_batch'].to(device)
         
         batch_size = batch['question_input_ids'].shape[0]
         
@@ -148,7 +172,6 @@ def generate_paths(
             all_entities, all_relations = model.model.generate_multiple(
                 batch['question_input_ids'],
                 batch['question_attention_mask'],
-                batch['graph_batch'],
                 num_paths=num_paths_per_sample,
                 path_length=path_length,
                 temperature=temperature
@@ -211,7 +234,6 @@ def generate_paths(
                 entities, relations = model.model.generate(
                     batch['question_input_ids'],
                     batch['question_attention_mask'],
-                    batch['graph_batch'],
                     path_length=path_length,
                     temperature=temperature
                 )
@@ -417,12 +439,15 @@ Examples:
     
     # Create dataset
     print(f"\nPreparing dataset...")
+    tokenizer_name = model.hparams.get('question_encoder', 'sentence-transformers/all-MiniLM-L6-v2')
+    
     dataset = KGPathDataset(
         args.data,
         vocab=vocab,
         build_vocab=False,
         max_path_length=args.path_length,
-        training=False  # Use first path for consistent evaluation
+        training=False,  # Use first path for consistent evaluation
+        tokenizer_name=tokenizer_name
     )
     
     # Limit samples if requested
@@ -482,28 +507,49 @@ Examples:
         print(f"SAMPLE OUTPUTS (showing {min(args.show_examples, len(results))})")
         print("=" * 70)
         
+        # Set UTF-8 encoding for Windows console if possible
+        import sys
+        if sys.platform == 'win32':
+            try:
+                sys.stdout.reconfigure(encoding='utf-8')
+            except:
+                pass  # If reconfiguration fails, continue with default encoding
+        
         for i, result in enumerate(results[:args.show_examples]):
             print(f"\n--- Sample {i+1} ---")
             print(f"ID: {result['id']}")
-            print(f"Question: {result.get('question', 'N/A')}")
-            print(f"Answer: {result.get('answer', 'N/A')}")
-            print(f"Q Entity: {result.get('q_entity', 'N/A')}")
-            print(f"A Entity: {result.get('a_entity', 'N/A')}")
+            
+            # Safely print Unicode strings
+            def safe_print(label, value):
+                try:
+                    if isinstance(value, (list, dict)):
+                        print(f"{label}: {value}")
+                    else:
+                        print(f"{label}: {value}")
+                except UnicodeEncodeError:
+                    # Fallback: encode to ASCII with error handling
+                    safe_value = str(value).encode('ascii', 'replace').decode('ascii')
+                    print(f"{label}: {safe_value}")
+            
+            safe_print("Question", result.get('question', 'N/A'))
+            safe_print("Answer", result.get('answer', 'N/A'))
+            safe_print("Q Entity", result.get('q_entity', 'N/A'))
+            safe_print("A Entity", result.get('a_entity', 'N/A'))
             
             # Show all generated paths if multipath mode
             if 'generated_paths' in result:
                 print(f"\nGenerated Paths ({len(result['generated_paths'])}):")
                 for j, gp in enumerate(result['generated_paths'][:5]):
-                    print(f"  [{j+1}] {gp.get('path_string', 'N/A')}")
+                    safe_print(f"  [{j+1}]", gp.get('path_string', 'N/A'))
             else:
-                print(f"\nGenerated Path: {result.get('generated_path', 'N/A')}")
-                print(f"Generated Relations: {result.get('generated_relation_chain', 'N/A')}")
+                safe_print("\nGenerated Path", result.get('generated_path', 'N/A'))
+                safe_print("Generated Relations", result.get('generated_relation_chain', 'N/A'))
             
             gt_paths = result.get('ground_truth_paths', [])
             if gt_paths:
                 print(f"\nGround Truth Paths ({len(gt_paths)}):")
                 for j, gt in enumerate(gt_paths[:3]):
-                    print(f"  [{j+1}] {gt.get('path_string', 'N/A')}")
+                    safe_print(f"  [{j+1}]", gt.get('path_string', 'N/A'))
             
             print("-" * 50)
     

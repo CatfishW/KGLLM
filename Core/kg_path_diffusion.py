@@ -3,8 +3,7 @@ KG Path Diffusion Model - Main Model Implementation.
 
 Combines:
 - Question encoder (pretrained transformer)
-- Graph encoder (RGCN/Transformer)
-- Discrete diffusion for path generation
+- Discrete diffusion for path generation (relation chains only)
 """
 
 import torch
@@ -13,11 +12,10 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 from transformers import AutoModel
 from typing import Dict, Optional, Tuple, Any
-from torch_geometric.data import Batch
+import os
+import math
 
-from modules.graph_encoder import HybridGraphEncoder, RelationalGraphEncoder
 from modules.diffusion import PathDiffusionTransformer, DiscreteDiffusion
-from modules.flow_matching import FlowMatchingPathGenerator
 
 
 class QuestionEncoder(nn.Module):
@@ -70,8 +68,7 @@ class KGPathDiffusionModel(nn.Module):
     
     Architecture:
     1. Question Encoder: Pretrained transformer for question understanding
-    2. Graph Encoder: RGCN/Transformer for KG subgraph encoding
-    3. Path Diffusion: Discrete diffusion model for path generation
+    2. Path Diffusion: Discrete diffusion model for relation chain generation
     """
     
     def __init__(
@@ -81,16 +78,11 @@ class KGPathDiffusionModel(nn.Module):
         hidden_dim: int = 256,
         question_encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         freeze_question_encoder: bool = False,
-        graph_encoder_type: str = "hybrid",  # "rgcn", "transformer", "hybrid"
-        num_graph_layers: int = 3,
         num_diffusion_layers: int = 6,
         num_heads: int = 8,
         num_diffusion_steps: int = 1000,
         max_path_length: int = 20,
         dropout: float = 0.1,
-        path_generator_type: str = "diffusion",  # "diffusion" or "flow_matching"
-        flow_integration_steps: int = 32,
-        flow_ce_weight: float = 0.1,
         use_entity_embeddings: bool = True,
         predict_entities: bool = True
     ):
@@ -100,7 +92,6 @@ class KGPathDiffusionModel(nn.Module):
         self.num_relations = num_relations
         self.hidden_dim = hidden_dim
         self.max_path_length = max_path_length
-        self.path_generator_type = path_generator_type
         self.predict_entities = predict_entities
         self.use_entity_embeddings = use_entity_embeddings
         
@@ -111,136 +102,48 @@ class KGPathDiffusionModel(nn.Module):
             freeze=freeze_question_encoder
         )
         
-        # Graph encoder
-        if graph_encoder_type == "hybrid":
-            self.graph_encoder = HybridGraphEncoder(
-                num_entities=num_entities,
-                num_relations=num_relations,
-                entity_dim=hidden_dim,
-                hidden_dim=hidden_dim,
-                output_dim=hidden_dim,
-                num_rgcn_layers=num_graph_layers // 2,
-                num_transformer_layers=num_graph_layers - num_graph_layers // 2,
-                num_heads=num_heads,
-                dropout=dropout,
-                use_entity_embeddings=use_entity_embeddings
-            )
-        else:
-            self.graph_encoder = RelationalGraphEncoder(
-                num_entities=num_entities,
-                num_relations=num_relations,
-                entity_dim=hidden_dim,
-                hidden_dim=hidden_dim,
-                output_dim=hidden_dim,
-                num_layers=num_graph_layers,
-                dropout=dropout,
-                use_entity_embeddings=use_entity_embeddings
-            )
+        # Diffusion model
+        self.diffusion = DiscreteDiffusion(
+            num_entities=num_entities,
+            num_relations=num_relations,
+            num_timesteps=num_diffusion_steps
+        )
         
-        if self.path_generator_type == "diffusion":
-            self.diffusion = DiscreteDiffusion(
-                num_entities=num_entities,
-                num_relations=num_relations,
-                num_timesteps=num_diffusion_steps
-            )
-            
-            self.denoiser = PathDiffusionTransformer(
-                num_entities=num_entities,
-                num_relations=num_relations,
-                hidden_dim=hidden_dim,
-                num_layers=num_diffusion_layers,
-                num_heads=num_heads,
-                question_dim=hidden_dim,
-                graph_dim=hidden_dim,
-                max_path_length=max_path_length,
-                dropout=dropout,
-                predict_entities=predict_entities
-            )
-        elif self.path_generator_type == "flow_matching":
-            # Flow matching not updated yet for relation-only mode
-            self.flow_generator = FlowMatchingPathGenerator(
-                num_entities=num_entities,
-                num_relations=num_relations,
-                hidden_dim=hidden_dim,
-                num_layers=num_diffusion_layers,
-                num_heads=num_heads,
-                question_dim=hidden_dim,
-                graph_dim=hidden_dim,
-                max_path_length=max_path_length,
-                dropout=dropout,
-                num_integration_steps=flow_integration_steps,
-                ce_weight=flow_ce_weight
-            )
-        else:
-            raise ValueError(f"Unknown path_generator_type: {self.path_generator_type}")
+        self.denoiser = PathDiffusionTransformer(
+            num_entities=num_entities,
+            num_relations=num_relations,
+            hidden_dim=hidden_dim,
+            num_layers=num_diffusion_layers,
+            num_heads=num_heads,
+            question_dim=hidden_dim,
+            max_path_length=max_path_length,
+            dropout=dropout,
+            predict_entities=predict_entities
+        )
     
     def encode_inputs(
         self,
         question_input_ids: torch.Tensor,
-        question_attention_mask: torch.Tensor,
-        graph_batch: Batch,
-        node_input_ids: Optional[torch.Tensor] = None,
-        node_attention_mask: Optional[torch.Tensor] = None
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        question_attention_mask: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Encode question and graph inputs.
+        Encode question inputs.
         
         Returns:
             question_seq: [B, seq_len, hidden_dim]
             question_pooled: [B, hidden_dim]
-            graph_node_emb: [B, max_nodes, hidden_dim]
-            graph_pooled: [B, hidden_dim]
-            graph_mask: [B, max_nodes] (True = ignored)
         """
         # Encode question
         question_seq, question_pooled = self.question_encoder(
             question_input_ids, question_attention_mask
         )
         
-        # Encode graph
-        # Pass question encoder as text encoder if needed
-        node_emb, graph_pooled = self.graph_encoder(
-            graph_batch.node_ids,
-            graph_batch.edge_index,
-            graph_batch.edge_type,
-            graph_batch.batch,
-            node_input_ids=node_input_ids,
-            node_attention_mask=node_attention_mask,
-            text_encoder=self.question_encoder
-        )
-        
-        # Reshape node embeddings to [B, max_nodes, hidden_dim]
-        batch_size = question_input_ids.shape[0]
-        device = question_input_ids.device
-        
-        # Get number of nodes per graph
-        nodes_per_graph = torch.bincount(graph_batch.batch, minlength=batch_size)
-        max_nodes = nodes_per_graph.max().item()
-        
-        # Create padded tensor
-        graph_node_emb = torch.zeros(batch_size, max_nodes, self.hidden_dim, device=device)
-        
-        # Create mask (True = ignored/padding)
-        graph_mask = torch.ones(batch_size, max_nodes, dtype=torch.bool, device=device)
-        
-        # Fill in node embeddings and update mask
-        node_idx = 0
-        for i in range(batch_size):
-            n_nodes = nodes_per_graph[i].item()
-            graph_node_emb[i, :n_nodes] = node_emb[node_idx:node_idx + n_nodes]
-            graph_mask[i, :n_nodes] = False
-            # Ensure at least 2 valid nodes to avoid single-element softmax instability
-            if n_nodes == 1 and max_nodes > 1:
-                graph_mask[i, 1] = False
-            node_idx += n_nodes
-        
-        return question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask
+        return question_seq, question_pooled
     
     def forward(
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_batch: Batch,
         target_entities: torch.Tensor,
         target_relations: torch.Tensor,
         path_mask: Optional[torch.Tensor] = None
@@ -249,48 +152,25 @@ class KGPathDiffusionModel(nn.Module):
         Training forward pass (single path mode for backward compatibility).
         """
         # Encode inputs
-        # Extract node text features if available
-        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
-        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
-        
-        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch,
-            node_input_ids=node_input_ids,
-            node_attention_mask=node_attention_mask
+        question_seq, question_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask
         )
         
-        if self.path_generator_type == "diffusion":
-            return self._forward_diffusion_single(
-                question_seq,
-                question_attention_mask,
-                graph_node_emb,
-                target_entities,
-                target_relations,
-                target_entities,
-                target_relations,
-                path_mask,
-                graph_mask
-            )
-        else:
-            return self._forward_flow_single(
-                question_seq,
-                question_attention_mask,
-                graph_node_emb,
-                target_entities,
-                target_relations,
-                path_mask
-            )
+        return self._forward_diffusion_single(
+            question_seq,
+            question_attention_mask,
+            target_entities,
+            target_relations,
+            path_mask
+        )
 
     def _forward_diffusion_single(
         self,
         question_seq: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_node_emb: torch.Tensor,
         target_entities: torch.Tensor,
         target_relations: torch.Tensor,
-
-        path_mask: Optional[torch.Tensor],
-        graph_mask: Optional[torch.Tensor] = None
+        path_mask: Optional[torch.Tensor] = None
     ) -> Dict[str, torch.Tensor]:
         B = question_seq.shape[0]
         device = question_seq.device
@@ -304,10 +184,9 @@ class KGPathDiffusionModel(nn.Module):
         
         entity_logits, relation_logits = self.denoiser(
             denoiser_entities, noisy_relations, t,
-            question_seq, graph_node_emb,
+            question_seq,
             path_mask=path_mask,
-            question_mask=~question_attention_mask.bool(),
-            graph_mask=graph_mask
+            question_mask=~question_attention_mask.bool()
         )
         losses = self.diffusion.compute_loss(
             entity_logits, relation_logits,
@@ -315,31 +194,11 @@ class KGPathDiffusionModel(nn.Module):
             path_mask=path_mask
         )
         return losses
-
-    def _forward_flow_single(
-        self,
-        question_seq: torch.Tensor,
-        question_attention_mask: torch.Tensor,
-        graph_node_emb: torch.Tensor,
-        target_entities: torch.Tensor,
-        target_relations: torch.Tensor,
-        path_mask: Optional[torch.Tensor]
-    ) -> Dict[str, torch.Tensor]:
-        losses = self.flow_generator(
-            target_entities,
-            target_relations,
-            question_seq,
-            graph_node_emb,
-            path_mask=path_mask,
-            question_mask=~question_attention_mask.bool()
-        )
-        return losses
     
     def forward_multipath(
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_batch: Batch,
         all_target_entities: torch.Tensor,
         all_target_relations: torch.Tensor,
         all_path_lengths: torch.Tensor,
@@ -355,13 +214,8 @@ class KGPathDiffusionModel(nn.Module):
         device = question_input_ids.device
         
         # Encode inputs once (shared across all paths)
-        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
-        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
-        
-        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch,
-            node_input_ids=node_input_ids,
-            node_attention_mask=node_attention_mask
+        question_seq, question_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask
         )
         
         # Expand encoded inputs for all paths
@@ -369,14 +223,8 @@ class KGPathDiffusionModel(nn.Module):
         question_seq_expanded = question_seq.unsqueeze(1).expand(-1, max_paths, -1, -1)
         question_seq_expanded = question_seq_expanded.reshape(B * max_paths, -1, self.hidden_dim)
         
-        graph_node_emb_expanded = graph_node_emb.unsqueeze(1).expand(-1, max_paths, -1, -1)
-        graph_node_emb_expanded = graph_node_emb_expanded.reshape(B * max_paths, -1, self.hidden_dim)
-        
         question_mask_expanded = (~question_attention_mask.bool()).unsqueeze(1).expand(-1, max_paths, -1)
         question_mask_expanded = question_mask_expanded.reshape(B * max_paths, -1)
-
-        graph_mask_expanded = graph_mask.unsqueeze(1).expand(-1, max_paths, -1)
-        graph_mask_expanded = graph_mask_expanded.reshape(B * max_paths, -1)
         
         # Flatten paths: [B, max_paths, path_len] -> [B * max_paths, path_len]
         flat_entities = all_target_entities.reshape(B * max_paths, path_len)
@@ -406,52 +254,28 @@ class KGPathDiffusionModel(nn.Module):
         valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
         valid_path_mask_flat = valid_path_mask.reshape(B * max_paths)
         
-        # Add debug checks to catch NaN cases
-        if torch.isnan(flat_entities).any() or torch.isnan(flat_relations).any():
-            print(f"Warning: NaN detected in input tensors!")
-            print(f"flat_entities has NaN: {torch.isnan(flat_entities).any()}")
-            print(f"flat_relations has NaN: {torch.isnan(flat_relations).any()}")
-        
-        if self.path_generator_type == "diffusion":
-            return self._forward_diffusion_multipath(
-                question_seq_expanded,
-                graph_node_emb_expanded,
-                flat_entities,
-                flat_relations,
-                path_mask,
-                relation_mask,
-                valid_path_mask_flat,
-                question_mask_expanded,
-                graph_mask_expanded,
-                B,
-                max_paths,
-                num_paths
-            )
-        else:
-            return self._forward_flow_multipath(
-                question_seq_expanded,
-                graph_node_emb_expanded,
-                flat_entities,
-                flat_relations,
-                path_mask,
-                valid_path_mask_flat,
-                question_mask_expanded,
-                B,
-                max_paths,
-                num_paths
-            )
+        return self._forward_diffusion_multipath(
+            question_seq_expanded,
+            flat_entities,
+            flat_relations,
+            path_mask,
+            relation_mask,
+            valid_path_mask_flat,
+            question_mask_expanded,
+            B,
+            max_paths,
+            num_paths
+        )
 
     def _forward_diffusion_multipath(
         self,
         question_seq: torch.Tensor,
-        graph_node_emb: torch.Tensor,
         flat_entities: torch.Tensor,
         flat_relations: torch.Tensor,
         path_mask: torch.Tensor,
         relation_mask: torch.Tensor,
         valid_path_mask: torch.Tensor,
         question_mask: torch.Tensor,
-        graph_mask: torch.Tensor,
         batch_size: int,
         max_paths: int,
         num_paths: torch.Tensor
@@ -486,25 +310,18 @@ class KGPathDiffusionModel(nn.Module):
         
         entity_logits, relation_logits = self.denoiser(
             denoiser_entities, noisy_relations, t_expanded,
-            question_seq, graph_node_emb,
+            question_seq,
             path_mask=denoiser_path_mask,
-            question_mask=question_mask,
-            # Disable graph_mask to prevent NaN gradients caused by single-element attention instability
-            graph_mask=None
+            question_mask=question_mask
         )
         
-        # Check for NaN in outputs before computing loss
+        # Replace NaN with zeros to prevent propagation
         if torch.isnan(relation_logits).any():
-            print(f"Warning: NaN detected in relation_logits after denoiser!")
-            print(f"  relation_logits shape: {relation_logits.shape}")
-            print(f"  relation_logits stats: min={relation_logits.min()}, max={relation_logits.max()}, mean={relation_logits.mean()}")
-            # Replace NaN with zeros to prevent propagation
             relation_logits = torch.where(torch.isnan(relation_logits), 
                                          torch.zeros_like(relation_logits), 
                                          relation_logits)
         
         if entity_logits is not None and torch.isnan(entity_logits).any():
-            print(f"Warning: NaN detected in entity_logits after denoiser!")
             entity_logits = torch.where(torch.isnan(entity_logits), 
                                        torch.zeros_like(entity_logits), 
                                        entity_logits)
@@ -522,13 +339,8 @@ class KGPathDiffusionModel(nn.Module):
         num_paths_float = num_paths.float().clamp(min=1)
         sample_losses = losses_per_path.sum(dim=1) / num_paths_float
         
-        # Check for NaN before taking mean
+        # Replace NaN with 0
         if torch.isnan(sample_losses).any():
-            print(f"Warning: NaN detected in sample_losses!")
-            print(f"  sample_losses: {sample_losses}")
-            print(f"  losses_per_path: {losses_per_path}")
-            print(f"  num_paths: {num_paths}")
-            # Replace NaN with 0
             sample_losses = torch.where(torch.isnan(sample_losses), 
                                        torch.zeros_like(sample_losses), 
                                        sample_losses)
@@ -537,7 +349,6 @@ class KGPathDiffusionModel(nn.Module):
         
         # Final NaN check
         if torch.isnan(total_loss):
-            print(f"Warning: NaN in total_loss! Replacing with 0.")
             total_loss = torch.tensor(0.0, device=device, requires_grad=True)
         return {
             'loss': total_loss,
@@ -545,39 +356,6 @@ class KGPathDiffusionModel(nn.Module):
             'relation_loss': total_loss * 0.5 if self.predict_entities else total_loss,
             'num_paths_avg': num_paths.float().mean()
         }
-
-    def _forward_flow_multipath(
-        self,
-        question_seq: torch.Tensor,
-        graph_node_emb: torch.Tensor,
-        flat_entities: torch.Tensor,
-        flat_relations: torch.Tensor,
-        path_mask: torch.Tensor,
-        valid_path_mask: torch.Tensor,
-        question_mask: torch.Tensor,
-        batch_size: int,
-        max_paths: int,
-        num_paths: torch.Tensor
-    ) -> Dict[str, torch.Tensor]:
-        if valid_path_mask.sum() == 0:
-            zero = torch.tensor(0.0, device=question_seq.device)
-            return {
-                'loss': zero,
-                'entity_loss': zero,
-                'relation_loss': zero,
-                'num_paths_avg': num_paths.float().mean()
-            }
-        selected = valid_path_mask.bool()
-        outputs = self.flow_generator(
-            flat_entities[selected],
-            flat_relations[selected],
-            question_seq[selected],
-            graph_node_emb[selected],
-            path_mask=path_mask[selected],
-            question_mask=question_mask[selected]
-        )
-        outputs['num_paths_avg'] = num_paths.float().mean()
-        return outputs
     
     def _compute_loss_per_path(
         self,
@@ -594,10 +372,6 @@ class KGPathDiffusionModel(nn.Module):
         device = relation_logits.device
         
         losses = torch.zeros(B_flat, device=device)
-        
-        # Debug: Check for NaNs in inputs
-        if torch.isnan(relation_logits).any():
-            print(f"NaN detected in relation_logits! Max: {relation_logits.max()}, Min: {relation_logits.min()}")
         
         for i in range(B_flat):
             if not valid_mask[i]:
@@ -619,14 +393,13 @@ class KGPathDiffusionModel(nn.Module):
                     # All targets are invalid/padding, skip this path
                     r_loss = torch.tensor(0.0, device=device, requires_grad=True)
                 elif r_logits.numel() > 0 and valid_targets.sum() > 0:
-                    # Only compute loss on valid targets
-                    valid_r_logits = r_logits[valid_targets]
-                    valid_r_targets = r_targets[valid_targets]
-                    r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
-                    # Check for NaN
-                    if torch.isnan(r_loss):
-                        print(f"Warning: NaN in relation loss for path {i}")
-                        r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                        # Only compute loss on valid targets
+                        valid_r_logits = r_logits[valid_targets]
+                        valid_r_targets = r_targets[valid_targets]
+                        r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
+                        # Check for NaN
+                        if torch.isnan(r_loss):
+                            r_loss = torch.tensor(0.0, device=device, requires_grad=True)
                 else:
                     r_loss = torch.tensor(0.0, device=device, requires_grad=True)
             
@@ -651,7 +424,6 @@ class KGPathDiffusionModel(nn.Module):
                         e_loss = F.cross_entropy(valid_e_logits, valid_e_targets, reduction='mean')
                         # Check for NaN
                         if torch.isnan(e_loss):
-                            print(f"Warning: NaN in entity loss for path {i}")
                             e_loss = torch.tensor(0.0, device=device, requires_grad=True)
                     else:
                         e_loss = torch.tensor(0.0, device=device, requires_grad=True)
@@ -667,7 +439,6 @@ class KGPathDiffusionModel(nn.Module):
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_batch: Batch,
         path_length: int = 10,
         temperature: float = 1.0
     ) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -679,32 +450,19 @@ class KGPathDiffusionModel(nn.Module):
             relations: [B, path_length-1]
         """
         # Encode inputs
-        node_input_ids = getattr(graph_batch, 'node_input_ids', None)
-        node_attention_mask = getattr(graph_batch, 'node_attention_mask', None)
-        
-        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch,
-            node_input_ids=node_input_ids,
-            node_attention_mask=node_attention_mask
+        question_seq, question_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask
         )
         
         question_mask = ~question_attention_mask.bool()
         
-        if self.path_generator_type == "diffusion":
-            entities, relations = self.diffusion.sample(
-                self.denoiser,
-                question_seq, graph_node_emb,
-                path_length=path_length,
-                question_mask=question_mask,
-                temperature=temperature
-            )
-        else:
-            entities, relations = self.flow_generator.sample(
-                question_seq, graph_node_emb,
-                path_length=path_length,
-                question_mask=question_mask,
-                temperature=temperature
-            )
+        entities, relations = self.diffusion.sample(
+            self.denoiser,
+            question_seq,
+            path_length=path_length,
+            question_mask=question_mask,
+            temperature=temperature
+        )
         
         return entities, relations
     
@@ -713,7 +471,6 @@ class KGPathDiffusionModel(nn.Module):
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        graph_batch: Batch,
         num_paths: int = 5,
         path_length: int = 10,
         temperature: float = 1.0,
@@ -728,11 +485,12 @@ class KGPathDiffusionModel(nn.Module):
         Args:
             question_input_ids: [B, seq_len]
             question_attention_mask: [B, seq_len]
-            graph_batch: PyG Batch object
             num_paths: Number of paths to generate per sample
-            path_length: Length of each path
+            path_length: Maximum length of each generated path
             temperature: Sampling temperature (higher = more diverse)
             diversity_penalty: Penalty for repeating entities/relations
+            split_long_paths: If True, split long paths into multiple shorter paths
+            max_path_length: Maximum length per path when splitting
         
         Returns:
             all_entities: [B, num_paths, path_length]
@@ -742,8 +500,8 @@ class KGPathDiffusionModel(nn.Module):
         device = question_input_ids.device
         
         # Encode inputs once
-        question_seq, question_pooled, graph_node_emb, graph_pooled, graph_mask = self.encode_inputs(
-            question_input_ids, question_attention_mask, graph_batch
+        question_seq, question_pooled = self.encode_inputs(
+            question_input_ids, question_attention_mask
         )
         
         # Generate multiple paths
@@ -762,21 +520,13 @@ class KGPathDiffusionModel(nn.Module):
                 curr_temp = temperature
             
             # Generate one path
-            if self.path_generator_type == "diffusion":
-                entities, relations = self.diffusion.sample(
-                    self.denoiser,
-                    question_seq, graph_node_emb,
-                    path_length=path_length,
-                    question_mask=~question_attention_mask.bool(),
-                    temperature=curr_temp
-                )
-            else:
-                entities, relations = self.flow_generator.sample(
-                    question_seq, graph_node_emb,
-                    path_length=path_length,
-                    question_mask=~question_attention_mask.bool(),
-                    temperature=curr_temp
-                )
+            entities, relations = self.diffusion.sample(
+                self.denoiser,
+                question_seq,
+                path_length=path_length,
+                question_mask=~question_attention_mask.bool(),
+                temperature=curr_temp
+            )
             
             all_entities.append(entities)
             all_relations.append(relations)
@@ -786,6 +536,8 @@ class KGPathDiffusionModel(nn.Module):
             for b in range(B):
                 generated_targets[b, final_entities[b]] += 1
         
+        # Stack results: [B, num_paths, path_length]
+        # If we split paths, we might have more than num_paths
         # Stack results: [B, num_paths, path_length]
         all_entities = torch.stack(all_entities, dim=1)
         all_relations = torch.stack(all_relations, dim=1)
@@ -813,8 +565,6 @@ class KGPathDiffusionLightning(pl.LightningModule):
         hidden_dim: int = 256,
         question_encoder_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         freeze_question_encoder: bool = False,
-        graph_encoder_type: str = "hybrid",
-        num_graph_layers: int = 3,
         num_diffusion_layers: int = 6,
         num_heads: int = 8,
         num_diffusion_steps: int = 1000,
@@ -825,9 +575,6 @@ class KGPathDiffusionLightning(pl.LightningModule):
         warmup_steps: int = 1000,
         max_steps: int = 100000,
         use_multipath_training: bool = True,
-        path_generator_type: str = "diffusion",
-        flow_integration_steps: int = 32,
-        flow_ce_weight: float = 0.1,
         use_entity_embeddings: bool = True,
         predict_entities: bool = True
     ):
@@ -840,16 +587,11 @@ class KGPathDiffusionLightning(pl.LightningModule):
             hidden_dim=hidden_dim,
             question_encoder_name=question_encoder_name,
             freeze_question_encoder=freeze_question_encoder,
-            graph_encoder_type=graph_encoder_type,
-            num_graph_layers=num_graph_layers,
             num_diffusion_layers=num_diffusion_layers,
             num_heads=num_heads,
             num_diffusion_steps=num_diffusion_steps,
             max_path_length=max_path_length,
             dropout=dropout,
-            path_generator_type=path_generator_type,
-            flow_integration_steps=flow_integration_steps,
-            flow_ce_weight=flow_ce_weight,
             use_entity_embeddings=use_entity_embeddings,
             predict_entities=predict_entities
         )
@@ -859,6 +601,88 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
         self.use_multipath_training = use_multipath_training
+    
+    def load_checkpoint(self, checkpoint_path: str, strict: bool = False) -> Dict[str, Any]:
+        """
+        Load checkpoint with parameter matching.
+        
+        Args:
+            checkpoint_path: Path to checkpoint file
+            strict: If True, raise error on mismatches. If False, skip mismatched parameters.
+        
+        Returns:
+            Dictionary with loading statistics:
+            - loaded: number of parameters loaded
+            - skipped: number of parameters skipped
+            - missing: number of parameters in model but not in checkpoint
+        """
+        if not os.path.exists(checkpoint_path):
+            raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
+        
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        # Handle different checkpoint formats
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+        
+        # Remove 'model.' prefix if present (PyTorch Lightning format)
+        cleaned_state_dict = {}
+        for key, value in state_dict.items():
+            if key.startswith('model.'):
+                cleaned_key = key[6:]  # Remove 'model.' prefix
+                cleaned_state_dict[cleaned_key] = value
+            else:
+                cleaned_state_dict[key] = value
+        
+        # Get current model state dict
+        model_state = self.model.state_dict()
+        
+        # Statistics
+        loaded = 0
+        skipped = 0
+        missing = []
+        
+        # Match and load parameters
+        for name, param in model_state.items():
+            if name in cleaned_state_dict:
+                checkpoint_param = cleaned_state_dict[name]
+                
+                # Check if shapes match
+                if param.shape == checkpoint_param.shape:
+                    try:
+                        # Load the parameter
+                        param.data.copy_(checkpoint_param)
+                        loaded += 1
+                    except Exception as e:
+                        if strict:
+                            raise RuntimeError(f"Failed to load parameter {name}: {e}")
+                        skipped += 1
+                else:
+                    # Shape mismatch
+                    if strict:
+                        raise RuntimeError(
+                            f"Shape mismatch for parameter {name}: "
+                            f"model has {param.shape}, checkpoint has {checkpoint_param.shape}"
+                        )
+                    skipped += 1
+            else:
+                # Parameter not in checkpoint
+                missing.append(name)
+                if strict:
+                    raise RuntimeError(f"Parameter {name} not found in checkpoint")
+        
+        stats = {
+            'loaded': loaded,
+            'skipped': skipped,
+            'missing': len(missing),
+            'missing_params': missing[:10]  # Show first 10 missing params
+        }
+        
+        return stats
     
     def forward(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         """Forward pass - uses multi-path training if enabled."""
@@ -872,7 +696,6 @@ class KGPathDiffusionLightning(pl.LightningModule):
         return self.model(
             question_input_ids=batch['question_input_ids'],
             question_attention_mask=batch['question_attention_mask'],
-            graph_batch=batch['graph_batch'],
             target_entities=batch['path_entities'],
             target_relations=batch['path_relations'],
             path_mask=batch.get('path_mask')
@@ -883,7 +706,6 @@ class KGPathDiffusionLightning(pl.LightningModule):
         return self.model.forward_multipath(
             question_input_ids=batch['question_input_ids'],
             question_attention_mask=batch['question_attention_mask'],
-            graph_batch=batch['graph_batch'],
             all_target_entities=batch['all_path_entities'],
             all_target_relations=batch['all_path_relations'],
             all_path_lengths=batch['all_path_lengths'],
@@ -891,6 +713,10 @@ class KGPathDiffusionLightning(pl.LightningModule):
         )
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        # Clear CUDA cache periodically to free up memory
+        if batch_idx % 100 == 0:
+            torch.cuda.empty_cache()
+        
         outputs = self(batch)
         
         self.log('train/loss', outputs['loss'], prog_bar=True, sync_dist=True)
@@ -956,6 +782,4 @@ class KGPathDiffusionLightning(pl.LightningModule):
         }
 
 
-# Import math for lr_lambda
-import math
 

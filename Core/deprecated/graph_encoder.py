@@ -82,7 +82,8 @@ class RelationalGraphEncoder(nn.Module):
         batch: Optional[torch.Tensor] = None,
         node_input_ids: Optional[torch.Tensor] = None,
         node_attention_mask: Optional[torch.Tensor] = None,
-        text_encoder: Optional[nn.Module] = None
+        text_encoder: Optional[nn.Module] = None,
+        chunk_size: int = 32
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode graph nodes.
@@ -95,6 +96,7 @@ class RelationalGraphEncoder(nn.Module):
             node_input_ids: [num_nodes, seq_len] tokenized text
             node_attention_mask: [num_nodes, seq_len] attention mask
             text_encoder: Encoder module to use if use_entity_embeddings is False
+            chunk_size: Number of nodes to process at once when using text encoder (to avoid OOM)
         
         Returns:
             node_embeddings: [num_nodes, output_dim]
@@ -104,9 +106,34 @@ class RelationalGraphEncoder(nn.Module):
         if self.use_entity_embeddings:
             x = self.entity_embedding(node_ids)
         elif text_encoder is not None and node_input_ids is not None:
-            # Use text encoder (frozen or shared)
-            # text_encoder returns (seq_output, pooled_output)
-            _, x = text_encoder(node_input_ids, node_attention_mask)
+            # Use text encoder with chunked processing to avoid OOM for large graphs.
+            # Disable gradients (and dropout) for node text encoding to prevent huge
+            # computation graphs and GPU memory spikes when processing millions of nodes.
+            num_nodes = node_input_ids.shape[0]
+            text_encoder_was_training = getattr(text_encoder, "training", False)
+            prev_grad_state = torch.is_grad_enabled()
+            if text_encoder_was_training:
+                text_encoder.eval()
+            torch.set_grad_enabled(False)
+            try:
+                if num_nodes > chunk_size:
+                    # Process in chunks
+                    x_chunks = []
+                    for i in range(0, num_nodes, chunk_size):
+                        end_idx = min(i + chunk_size, num_nodes)
+                        chunk_input_ids = node_input_ids[i:end_idx]
+                        chunk_attention_mask = node_attention_mask[i:end_idx]
+                        _, chunk_x = text_encoder(chunk_input_ids, chunk_attention_mask)
+                        x_chunks.append(chunk_x.detach())
+                    x = torch.cat(x_chunks, dim=0)
+                else:
+                    # Process all at once if small enough
+                    _, x = text_encoder(node_input_ids, node_attention_mask)
+                    x = x.detach()
+            finally:
+                torch.set_grad_enabled(prev_grad_state)
+                if text_encoder_was_training:
+                    text_encoder.train()
         else:
             raise ValueError("Must provide text_encoder and node inputs when use_entity_embeddings is False")
         
@@ -288,7 +315,8 @@ class HybridGraphEncoder(nn.Module):
         batch: Optional[torch.Tensor] = None,
         node_input_ids: Optional[torch.Tensor] = None,
         node_attention_mask: Optional[torch.Tensor] = None,
-        text_encoder: Optional[nn.Module] = None
+        text_encoder: Optional[nn.Module] = None,
+        chunk_size: int = 32
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Encode graph with hybrid RGCN + Transformer architecture.
@@ -296,7 +324,33 @@ class HybridGraphEncoder(nn.Module):
         if self.use_entity_embeddings:
             x = self.entity_embedding(node_ids)
         elif text_encoder is not None and node_input_ids is not None:
-            _, x = text_encoder(node_input_ids, node_attention_mask)
+            # Use text encoder with chunked processing to avoid OOM for large graphs.
+            # Disable gradients/dropout during node text encoding to keep memory usage low.
+            num_nodes = node_input_ids.shape[0]
+            text_encoder_was_training = getattr(text_encoder, "training", False)
+            prev_grad_state = torch.is_grad_enabled()
+            if text_encoder_was_training:
+                text_encoder.eval()
+            torch.set_grad_enabled(False)
+            try:
+                if num_nodes > chunk_size:
+                    # Process in chunks
+                    x_chunks = []
+                    for i in range(0, num_nodes, chunk_size):
+                        end_idx = min(i + chunk_size, num_nodes)
+                        chunk_input_ids = node_input_ids[i:end_idx]
+                        chunk_attention_mask = node_attention_mask[i:end_idx]
+                        _, chunk_x = text_encoder(chunk_input_ids, chunk_attention_mask)
+                        x_chunks.append(chunk_x.detach())
+                    x = torch.cat(x_chunks, dim=0)
+                else:
+                    # Process all at once if small enough
+                    _, x = text_encoder(node_input_ids, node_attention_mask)
+                    x = x.detach()
+            finally:
+                torch.set_grad_enabled(prev_grad_state)
+                if text_encoder_was_training:
+                    text_encoder.train()
         else:
             raise ValueError("Must provide text_encoder and node inputs when use_entity_embeddings is False")
             

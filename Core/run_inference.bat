@@ -12,7 +12,7 @@ REM Default values
 set CONDA_ENV=%1
 set CKPT_DIR=%2
 if "%CONDA_ENV%"=="" set CONDA_ENV=Wu
-if "%CKPT_DIR%"=="" set CKPT_DIR=outputs_improved
+if "%CKPT_DIR%"=="" set CKPT_DIR=outputs_multipath_diffusion_relation_only
 
 echo ============================================================
 echo KG Path Diffusion Model - Inference
@@ -39,7 +39,7 @@ REM Run inference
 python inference.py ^
     --checkpoint %CKPT_DIR%/checkpoints/last.ckpt ^
     --vocab %CKPT_DIR%/vocab.json ^
-    --data ../Data/webqsp_combined/val.jsonl ^
+    --data Z:\20251125_KGLLM\Data\webqsp_final\test.parquet ^
     --output inference_results.jsonl ^
     --batch_size 8 ^
     --path_length 10 ^
