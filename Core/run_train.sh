@@ -9,19 +9,19 @@
 set -e
 
 # Default conda environment and config
-CONDA_ENV="${1:-Wu}"
-CONFIG_PATH="${2:-./configs/flow_matching_base.yaml}"
+# CONDA_ENV="${1:-Wu}"
+# CONFIG_PATH="${2:-./configs/flow_matching_base.yaml}"
 
-echo "Config File    : $CONFIG_PATH"
-echo "============================================================"
-echo "KG Path Diffusion Model - Training"
-echo "============================================================"
-echo "Conda Environment: $CONDA_ENV"
-echo "============================================================"
+# echo "Config File    : $CONFIG_PATH"
+# echo "============================================================"
+# echo "KG Path Diffusion Model - Training"
+# echo "============================================================"
+# echo "Conda Environment: $CONDA_ENV"
+# echo "============================================================"
 
-# Activate conda environment
-source "$(conda info --base)/etc/profile.d/conda.sh"
-conda activate "$CONDA_ENV"
+# # Activate conda environment
+# source "$(conda info --base)/etc/profile.d/conda.sh"
+# conda activate "$CONDA_ENV"
 
 # Run training with config-based settings
 python train.py --config "$CONFIG_PATH"
