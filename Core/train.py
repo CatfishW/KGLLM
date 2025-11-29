@@ -74,6 +74,17 @@ DEFAULTS = {
     'debug': False,
     'use_entity_embeddings': True,
     'predict_entities': True,
+    # Data augmentation defaults
+    'augment_questions': False,
+    'question_word_dropout': 0.0,
+    'question_word_swap_prob': 0.0,
+    'question_random_delete_prob': 0.0,
+    'augment_paths': False,
+    'path_random_single_path': True,
+    'path_max_paths': 20,
+    'path_dropout_prob': 0.0,
+    # Logging / callbacks
+    'log_path_examples': True,
 }
 
 try:
@@ -201,6 +212,26 @@ def parse_args():
                         help='Gradient clipping value')
     parser.add_argument('--accumulate_grad_batches', type=int, default=1,
                         help='Gradient accumulation steps')
+    parser.add_argument('--log_path_examples', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Enable PathExamplesLogger callback to log predicted and ground truth paths')
+    
+    # Data augmentation arguments
+    parser.add_argument('--augment_questions', type=lambda x: (str(x).lower() == 'true'), default=False,
+                        help='Enable question text augmentation during training')
+    parser.add_argument('--question_word_dropout', type=float, default=0.0,
+                        help='Probability of dropping each word in the question (0.0-1.0)')
+    parser.add_argument('--question_word_swap_prob', type=float, default=0.0,
+                        help='Probability of randomly swapping two words in the question')
+    parser.add_argument('--question_random_delete_prob', type=float, default=0.0,
+                        help='Probability of deleting a random word from the question')
+    parser.add_argument('--augment_paths', type=lambda x: (str(x).lower() == 'true'), default=False,
+                        help='Enable path-level augmentation during training')
+    parser.add_argument('--path_random_single_path', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='When True, randomly choose a single target path per sample for the legacy single-path output during training')
+    parser.add_argument('--path_max_paths', type=int, default=20,
+                        help='Maximum number of diverse paths to keep per sample (used in multi-path training and augmentation)')
+    parser.add_argument('--path_dropout_prob', type=float, default=0.0,
+                        help='Probability of dropping each candidate path when selecting diverse paths (0.0-1.0)')
     
     # Hardware arguments
     parser.add_argument('--gpus', type=int, default=-1,
@@ -295,6 +326,16 @@ def main():
     
     # Create data module
     print("\nSetting up data module...")
+    augmentation_config = {
+        'augment_questions': args.augment_questions,
+        'question_word_dropout': args.question_word_dropout,
+        'question_word_swap_prob': args.question_word_swap_prob,
+        'question_random_delete_prob': args.question_random_delete_prob,
+        'augment_paths': args.augment_paths,
+        'path_random_single_path': args.path_random_single_path,
+        'path_max_paths': args.path_max_paths,
+        'path_dropout_prob': args.path_dropout_prob,
+    }
     data_module = KGPathDataModule(
         train_path=args.train_data,
         val_path=args.val_data,
@@ -306,7 +347,8 @@ def main():
         max_question_length=args.max_question_length,
         max_path_length=args.max_path_length,
         max_entities=max_entities,
-        max_relations=args.max_relations
+        max_relations=args.max_relations,
+        augmentation_config=augmentation_config
     )
     
     # Setup data to build vocabulary
@@ -388,7 +430,9 @@ def main():
                 mode='min'
             )
         )
-        # Add path examples logger to log predicted and ground truth relation paths
+
+    # Optionally add path examples logger to log predicted and ground truth relation paths
+    if args.val_data and args.log_path_examples:
         callbacks.append(
             PathExamplesLogger(
                 num_examples=10,

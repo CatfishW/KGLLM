@@ -121,7 +121,8 @@ class KGPathDataset(Dataset):
         max_entities: int = 50000,
         max_relations: int = 5000,
         build_vocab: bool = False,
-        training: bool = True  # If True, randomly sample paths; if False, use first path
+        training: bool = True,  # If True, randomly sample paths; if False, use first path
+        augmentation_config: Optional[Dict[str, Any]] = None,
     ):
         self.data_path = Path(data_path)
         self.max_question_length = max_question_length
@@ -129,6 +130,7 @@ class KGPathDataset(Dataset):
         self.max_entities = max_entities
         self.max_relations = max_relations
         self.training = training
+        self.augmentation_config: Dict[str, Any] = augmentation_config or {}
 
         
         # Load tokenizer for questions
@@ -144,6 +146,58 @@ class KGPathDataset(Dataset):
                 self._build_vocab()
         else:
             self.vocab = vocab
+
+    # =========================
+    # Data augmentation helpers
+    # =========================
+
+    def _augment_question_text(self, question: str) -> str:
+        """Apply simple, label-preserving text augmentations to the question."""
+        if not self.training:
+            return question
+        if not self.augmentation_config.get('augment_questions', False):
+            return question
+
+        tokens = question.split()
+        if not tokens:
+            return question
+
+        # Word-level dropout
+        p_drop = float(self.augmentation_config.get('question_word_dropout', 0.0))
+        if p_drop > 0.0:
+            kept_tokens = [t for t in tokens if random.random() > p_drop]
+            # Avoid dropping everything
+            if kept_tokens:
+                tokens = kept_tokens
+
+        # Random swap of two tokens
+        swap_prob = float(self.augmentation_config.get('question_word_swap_prob', 0.0))
+        if swap_prob > 0.0 and len(tokens) >= 2 and random.random() < swap_prob:
+            i, j = random.sample(range(len(tokens)), 2)
+            tokens[i], tokens[j] = tokens[j], tokens[i]
+
+        # Delete a random token
+        delete_prob = float(self.augmentation_config.get('question_random_delete_prob', 0.0))
+        if delete_prob > 0.0 and len(tokens) > 1 and random.random() < delete_prob:
+            idx = random.randrange(len(tokens))
+            del tokens[idx]
+
+        return " ".join(tokens)
+
+    def _maybe_randomize_single_path(self, paths: List[Dict]) -> Dict:
+        """
+        Choose which path to use for the legacy single-path output.
+        During training we can randomly pick a path for data augmentation.
+        """
+        if not paths:
+            return {}
+        if not self.training:
+            return paths[0]
+        if not self.augmentation_config.get('augment_paths', False):
+            return paths[0]
+        if not self.augmentation_config.get('path_random_single_path', True):
+            return paths[0]
+        return random.choice(paths)
     
     def _load_data(self) -> List[Dict]:
         """Load data from parquet or jsonl file."""
@@ -245,14 +299,29 @@ class KGPathDataset(Dataset):
                     paths_by_target[target] = []
                 paths_by_target[target].append(path)
         
-        # Select shortest path for each target
+        # Select one path for each target (shortest or random shortest, depending on augmentation)
         diverse_paths = []
         for target, target_paths in paths_by_target.items():
             # Sort by path length (shorter first)
             target_paths.sort(key=lambda p: len(p.get('relations', [])))
-            diverse_paths.append(target_paths[0])
+            if self.training and self.augmentation_config.get('augment_paths', False):
+                # Optionally pick a random path among the K shortest to increase diversity
+                k = min(3, len(target_paths))
+                candidate_paths = target_paths[:k]
+                diverse_paths.append(random.choice(candidate_paths))
+            else:
+                diverse_paths.append(target_paths[0])
         
-        # Sort by path length and limit
+        # Optional path dropout during training
+        if self.training and self.augmentation_config.get('augment_paths', False):
+            dropout_prob = float(self.augmentation_config.get('path_dropout_prob', 0.0))
+            if dropout_prob > 0.0:
+                kept = [p for p in diverse_paths if random.random() > dropout_prob]
+                # Ensure at least one path is kept if possible
+                if kept:
+                    diverse_paths = kept
+
+        # Sort by path length and limit number of paths
         diverse_paths.sort(key=lambda p: len(p.get('relations', [])))
         return diverse_paths[:max_paths]
     
@@ -273,7 +342,14 @@ class KGPathDataset(Dataset):
         rel_pad_idx = self.vocab.relation2idx["<PAD>"]
         
         # Select diverse paths covering different answer entities
-        diverse_paths = self._select_diverse_paths(paths, max_paths=max_paths)
+        # If augmentation is enabled and a custom max_paths is provided, prefer that.
+        if self.training and self.augmentation_config.get('augment_paths', False):
+            config_max_paths = int(self.augmentation_config.get('path_max_paths', max_paths))
+            effective_max_paths = max(1, config_max_paths)
+        else:
+            effective_max_paths = max_paths
+
+        diverse_paths = self._select_diverse_paths(paths, max_paths=effective_max_paths)
         num_paths = len(diverse_paths)
         
         if num_paths == 0:
@@ -335,8 +411,9 @@ class KGPathDataset(Dataset):
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         sample = self.samples[idx]
         
-        # Encode question
+        # Encode question (with optional augmentation)
         question = sample.get('question', '')
+        question = self._augment_question_text(question)
         question_encoding = self.tokenizer(
             question,
             max_length=self.max_question_length,
@@ -351,8 +428,14 @@ class KGPathDataset(Dataset):
             # Encode all diverse paths
             all_paths = self._encode_all_paths(paths, max_paths=20)
             
-            # Also encode first path for backward compatibility (single path output)
-            first_path = self._encode_path(paths[0])
+            # Also encode a single path for backward compatibility (single path output)
+            # Optionally randomize which path is used during training
+            single_path_dict = self._maybe_randomize_single_path(paths)
+            first_path = self._encode_path(single_path_dict) if single_path_dict else {
+                'path_entities': torch.tensor([self.vocab.entity2idx["<BOS>"], self.vocab.entity2idx["<EOS>"]], dtype=torch.long),
+                'path_relations': torch.tensor([], dtype=torch.long),
+                'path_length': torch.tensor(2, dtype=torch.long)
+            }
         else:
             # Empty paths
             all_paths = {
@@ -503,7 +586,8 @@ class KGPathDataModule(pl.LightningDataModule):
         max_question_length: int = 64,
         max_path_length: int = 10,
         max_entities: int = 50000,
-        max_relations: int = 5000
+        max_relations: int = 5000,
+        augmentation_config: Optional[Dict[str, Any]] = None
     ):
         super().__init__()
         self.train_path = train_path
@@ -517,6 +601,7 @@ class KGPathDataModule(pl.LightningDataModule):
         self.max_path_length = max_path_length
         self.max_entities = max_entities
         self.max_relations = max_relations
+        self.augmentation_config: Dict[str, Any] = augmentation_config or {}
         
         self.vocab = None
         self.train_dataset = None
@@ -549,7 +634,8 @@ class KGPathDataModule(pl.LightningDataModule):
                 max_entities=self.max_entities,
                 max_relations=self.max_relations,
                 build_vocab=build_vocab,
-                training=True  # Randomly sample paths during training
+                training=True,  # Randomly sample paths during training
+                augmentation_config=self.augmentation_config
             )
             
             # Use the vocab from dataset if we built it
@@ -567,7 +653,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
                     build_vocab=False,
-                    training=False  # Use first path for consistent evaluation
+                    training=False,  # Use first path for consistent evaluation
+                    augmentation_config=self.augmentation_config
                 )
         
         if stage == 'test' or stage is None:
@@ -581,7 +668,8 @@ class KGPathDataModule(pl.LightningDataModule):
                     max_entities=self.max_entities,
                     max_relations=self.max_relations,
                     build_vocab=False,
-                    training=False  # Use first path for consistent evaluation
+                    training=False,  # Use first path for consistent evaluation
+                    augmentation_config=self.augmentation_config
                 )
     
     def train_dataloader(self):

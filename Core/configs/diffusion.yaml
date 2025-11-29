@@ -18,11 +18,22 @@ question_encoder: sentence-transformers/all-MiniLM-L6-v2
 tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
 freeze_question_encoder: false
 max_question_length: 200
-max_path_length: 50
+max_path_length: 25
 
 max_vocab_size: 2000000000
 max_entities: 20000000000
 max_relations: 50000
+
+# Data augmentation
+augment_questions: true            # Enable simple text augmentations on questions
+question_word_dropout: 0.01      # Probability of dropping each word in the question
+question_word_swap_prob: 0.01     # Probability of randomly swapping two words
+question_random_delete_prob: 0.01 # Probability of deleting one random word
+
+augment_paths: true               # Enable path-level augmentation
+path_random_single_path: true     # Randomly choose a single target path per sample (legacy single-path output)
+path_max_paths: 20                # Maximum number of diverse paths kept per sample
+path_dropout_prob: 0.1            # Probability of dropping each candidate path during selection
 
 # Training setup
 batch_size: 8
@@ -38,10 +49,11 @@ early_stopping_patience: 0  # 0 or negative disables early stopping; set >0 to e
 
 # Hardware / logging
 gpus: 1
-precision: 16-mixed
+precision: 16-mixed #16-mixed or 32-float
 strategy: auto
-output_dir: outputs_multipath_relation_only
-experiment_name: kg_path_relation_only
+output_dir: outputs_multipath_relation_only_2
+experiment_name: kg_path_relation_only_2
+log_path_examples: true          # Enable/disable logging of example paths via PathExamplesLogger
 wandb: false
 wandb_project: kg-path-diffusion
 seed: 64

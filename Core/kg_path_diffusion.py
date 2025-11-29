@@ -370,8 +370,14 @@ class KGPathDiffusionModel(nn.Module):
         """Compute loss for each path individually."""
         B_flat = relation_logits.shape[0]
         device = relation_logits.device
-        
-        losses = torch.zeros(B_flat, device=device)
+        losses = torch.zeros(B_flat, device=device, dtype=relation_logits.dtype)
+
+        # If there are no valid paths at all in this batch, create a dummy loss that
+        # is connected to the computation graph so that .backward() still works.
+        if not valid_mask.any():
+            dummy = relation_logits.sum() * 0.0
+            losses = losses + dummy
+            return losses
         
         for i in range(B_flat):
             if not valid_mask[i]:
