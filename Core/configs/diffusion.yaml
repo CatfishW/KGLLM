@@ -34,6 +34,7 @@ max_steps: 5000000  # Reduced for quick testing
 max_epochs: 100  # Reduced for quick testing
 gradient_clip: 1.0
 accumulate_grad_batches: 1
+early_stopping_patience: 0  # 0 or negative disables early stopping; set >0 to enable
 
 # Hardware / logging
 gpus: 1

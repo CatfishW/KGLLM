@@ -59,6 +59,7 @@ DEFAULTS = {
     'warmup_steps': 1000,
     'max_steps': 100000,
     'max_epochs': 100,
+    'early_stopping_patience': 10,
     'gradient_clip': 1.0,
     'accumulate_grad_batches': 1,
     'gpus': -1,
@@ -193,6 +194,9 @@ def parse_args():
                         help='Maximum training steps')
     parser.add_argument('--max_epochs', type=int, default=100,
                         help='Maximum training epochs')
+    parser.add_argument('--early_stopping_patience', type=int, default=10,
+                        help='Number of validation checks with no improvement before stopping early. '
+                             'Set to 0 or a negative value to disable early stopping.')
     parser.add_argument('--gradient_clip', type=float, default=1.0,
                         help='Gradient clipping value')
     parser.add_argument('--accumulate_grad_batches', type=int, default=1,
@@ -376,11 +380,11 @@ def main():
             )
         )
     
-    if args.val_data:
+    if args.val_data and args.early_stopping_patience is not None and args.early_stopping_patience > 0:
         callbacks.append(
             EarlyStopping(
                 monitor='val/loss',
-                patience=10,
+                patience=args.early_stopping_patience,
                 mode='min'
             )
         )
