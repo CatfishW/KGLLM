@@ -5,9 +5,9 @@ vocab_path: ../Data/webqsp_final/vocab.json
 # Model architecture
 hidden_dim: 256
 dropout: 0.1
-num_diffusion_layers: 1
+num_diffusion_layers: 2
 num_heads: 8
-num_diffusion_steps: 25
+num_diffusion_steps: 6
 
 # Optimization: Relation-only generation with frozen entity embeddings
 use_entity_embeddings: false
@@ -41,8 +41,8 @@ num_workers: 0  # Set to 0 for Windows compatibility (multiprocessing issues)
 learning_rate: 0.0001
 weight_decay: 0.01  
 warmup_steps: 1000
-max_steps: 5000000  # Reduced for quick testing
-max_epochs: 100  # Reduced for quick testing
+max_steps: 50000000  # Reduced for quick testing
+max_epochs: 500  # Reduced for quick testing
 gradient_clip: 1.0
 accumulate_grad_batches: 1
 early_stopping_patience: 0  # 0 or negative disables early stopping; set >0 to enable
@@ -51,8 +51,8 @@ early_stopping_patience: 0  # 0 or negative disables early stopping; set >0 to e
 gpus: 1
 precision: 16-mixed #16-mixed or 32-float
 strategy: auto
-output_dir: outputs_multipath_relation_only_2
-experiment_name: kg_path_relation_only_2
+output_dir: outputs_multipath_relation_only_4
+experiment_name: kg_path_relation_only_4
 log_path_examples: true          # Enable/disable logging of example paths via PathExamplesLogger
 wandb: false
 wandb_project: kg-path-diffusion

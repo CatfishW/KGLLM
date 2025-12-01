@@ -1,0 +1,76 @@
+# Configuration for Autoregressive Transformer Model (GPT-style)
+# Alternative to diffusion model for relation chain generation
+
+train_data: ../Data/webqsp_final/train.parquet
+val_data: ../Data/webqsp_final/val.parquet
+vocab_path: ../Data/webqsp_final/vocab.json
+
+# Model architecture selection
+model_type: autoregressive  # Options: "diffusion", "autoregressive", "t5", "gnn_decoder", "hybrid"
+
+# Autoregressive model architecture
+hidden_dim: 256
+dropout: 0.1
+num_layers: 6  # Number of transformer decoder layers
+num_heads: 8
+
+# Decoding strategy configuration
+decoding_strategy: beam_search  # Options: "greedy", "beam_search", "nucleus", "top_k", "contrastive"
+beam_width: 5  # For beam search (typically 5-20)
+top_p: 0.9  # For nucleus sampling (0.0-1.0, typically 0.9-0.95)
+top_k: 50  # For top-k sampling (typically 10-50)
+temperature: 1.0  # Sampling temperature (lower = more deterministic)
+length_penalty: 0.6  # Length penalty for beam search (0.0-1.0, typically 0.6-0.8)
+
+# Contrastive search (reduces repetition)
+use_contrastive_search: false
+contrastive_penalty_alpha: 0.6  # Repetition penalty (typically 0.6)
+contrastive_top_k: 4  # Top-k for candidate selection
+
+# Text handling
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: false
+max_question_length: 200
+max_path_length: 25
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# Data augmentation
+augment_questions: true
+question_word_dropout: 0.01
+question_word_swap_prob: 0.01
+question_random_delete_prob: 0.01
+
+augment_paths: true
+path_random_single_path: true
+path_max_paths: 20
+path_dropout_prob: 0.1
+
+# Training setup
+batch_size: 8
+num_workers: 0
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000000
+max_epochs: 500
+gradient_clip: 1.0
+accumulate_grad_batches: 1
+early_stopping_patience: 0
+
+# Hardware / logging
+gpus: 1
+precision: 16-mixed
+strategy: auto
+output_dir: outputs_autoregressive
+experiment_name: kg_path_autoregressive
+log_path_examples: true
+wandb: false
+wandb_project: kg-path-generation
+seed: 64
+resume: null
+debug: false
+

@@ -13,6 +13,7 @@ set CONDA_ENV=%1
 if "%CONDA_ENV%"=="" set CONDA_ENV=Wu
 
 set TRAIN_CONFIG=.\configs\diffusion.yaml
+@REM set TRAIN_CONFIG=.\configs\autoregressive.yaml
 @REM if "%TRAIN_CONFIG%"=="" set TRAIN_CONFIG=.\configs\flow_matching_base.yaml
 
 

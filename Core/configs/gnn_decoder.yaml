@@ -1,0 +1,83 @@
+# Configuration for GNN + Autoregressive Decoder Hybrid Model
+# Alternative to diffusion model for relation chain generation
+# Combines graph neural network encoding with autoregressive decoding
+
+train_data: ../Data/webqsp_final/train.parquet
+val_data: ../Data/webqsp_final/val.parquet
+vocab_path: ../Data/webqsp_final/vocab.json
+
+# Model architecture selection
+model_type: gnn_decoder  # Options: "diffusion", "autoregressive", "t5", "gnn_decoder", "hybrid"
+
+# GNN encoder configuration
+gnn_type: gat  # Options: "gat", "gcn", "graphsage"
+gnn_layers: 3  # Number of GNN layers
+gnn_heads: 8  # Number of attention heads per GNN layer (for GAT)
+gnn_hidden_dim: 256  # Hidden dimension for GNN
+gnn_dropout: 0.1
+
+# Autoregressive decoder configuration
+decoder_layers: 6  # Number of transformer decoder layers
+decoder_heads: 8  # Number of attention heads in decoder
+decoder_hidden_dim: 256  # Hidden dimension for decoder
+decoder_dropout: 0.1
+
+# Combined hidden dimension (should match between GNN and decoder)
+hidden_dim: 256
+dropout: 0.1
+
+# Decoding strategy
+decoding_strategy: beam_search
+beam_width: 5
+top_p: 0.9
+top_k: 50
+temperature: 1.0
+length_penalty: 0.6
+
+# Text handling
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: false
+max_question_length: 200
+max_path_length: 25
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# Data augmentation
+augment_questions: true
+question_word_dropout: 0.01
+question_word_swap_prob: 0.01
+question_random_delete_prob: 0.01
+
+augment_paths: true
+path_random_single_path: true
+path_max_paths: 20
+path_dropout_prob: 0.1
+
+# Training setup
+batch_size: 8
+num_workers: 0
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000000
+max_epochs: 500
+gradient_clip: 1.0
+accumulate_grad_batches: 1
+early_stopping_patience: 0
+
+# Hardware / logging
+gpus: 1
+precision: 16-mixed
+strategy: auto
+output_dir: outputs_gnn_decoder
+experiment_name: kg_path_gnn_decoder
+log_path_examples: true
+wandb: false
+wandb_project: kg-path-generation
+seed: 64
+resume: null
+debug: false
+

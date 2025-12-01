@@ -30,16 +30,18 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.dataset import KGPathDataModule
-from kg_path_diffusion import KGPathDiffusionLightning
-from callbacks.path_examples_logger import PathExamplesLogger
+from models.factory import create_model
+from training.callbacks.path_examples_logger import PathExamplesLogger
 
 DEFAULTS = {
     'train_data': None,
     'val_data': None,
     'test_data': None,
     'vocab_path': None,
+    'model_type': 'diffusion',  # Options: 'diffusion', 'autoregressive', 'gnn_decoder'
     'hidden_dim': 128,
     'num_diffusion_layers': 6,
+    'num_layers': 6,  # For autoregressive and gnn_decoder
     'num_heads': 8,
     'num_diffusion_steps': 1000,
     'max_path_length': 20,
@@ -85,6 +87,23 @@ DEFAULTS = {
     'path_dropout_prob': 0.0,
     # Logging / callbacks
     'log_path_examples': True,
+    # Autoregressive model parameters
+    'decoding_strategy': 'beam_search',
+    'beam_width': 5,
+    'top_p': 0.9,
+    'top_k': 50,
+    'temperature': 1.0,
+    'length_penalty': 0.6,
+    'use_contrastive_search': False,
+    'contrastive_penalty_alpha': 0.6,
+    'contrastive_top_k': 4,
+    # GNN decoder parameters
+    'gnn_type': 'gat',
+    'gnn_layers': 3,
+    'gnn_heads': 8,
+    'decoder_layers': 6,
+    'decoder_heads': 8,
+    'use_graph_structure': True,
 }
 
 try:
@@ -157,14 +176,19 @@ def parse_args():
                         help='Path to pre-built vocabulary (recommended for avoiding UNK tokens)')
     
     # Model arguments
+    parser.add_argument('--model_type', type=str, default='diffusion',
+                        choices=['diffusion', 'autoregressive', 'gnn_decoder'],
+                        help='Model type: diffusion, autoregressive, or gnn_decoder')
     parser.add_argument('--hidden_dim', type=int, default=128,
                         help='Hidden dimension size')
     parser.add_argument('--num_diffusion_layers', type=int, default=6,
-                        help='Number of transformer layers in the path generator')
+                        help='Number of transformer layers in the path generator (diffusion)')
+    parser.add_argument('--num_layers', type=int, default=6,
+                        help='Number of transformer layers (autoregressive/gnn_decoder)')
     parser.add_argument('--num_heads', type=int, default=8,
                         help='Number of attention heads')
     parser.add_argument('--num_diffusion_steps', type=int, default=1000,
-                        help='Number of diffusion timesteps')
+                        help='Number of diffusion timesteps (diffusion only)')
     parser.add_argument('--max_path_length', type=int, default=20,
                         help='Maximum path length')
     parser.add_argument('--dropout', type=float, default=0.1,
@@ -214,6 +238,42 @@ def parse_args():
                         help='Gradient accumulation steps')
     parser.add_argument('--log_path_examples', type=lambda x: (str(x).lower() == 'true'), default=True,
                         help='Enable PathExamplesLogger callback to log predicted and ground truth paths')
+    
+    # Autoregressive model arguments
+    parser.add_argument('--decoding_strategy', type=str, default='beam_search',
+                        choices=['greedy', 'beam_search', 'nucleus', 'top_k'],
+                        help='Decoding strategy for autoregressive models')
+    parser.add_argument('--beam_width', type=int, default=5,
+                        help='Beam width for beam search')
+    parser.add_argument('--top_p', type=float, default=0.9,
+                        help='Top-p (nucleus) sampling parameter')
+    parser.add_argument('--top_k', type=int, default=50,
+                        help='Top-k sampling parameter')
+    parser.add_argument('--temperature', type=float, default=1.0,
+                        help='Sampling temperature')
+    parser.add_argument('--length_penalty', type=float, default=0.6,
+                        help='Length penalty for beam search')
+    parser.add_argument('--use_contrastive_search', type=lambda x: (str(x).lower() == 'true'), default=False,
+                        help='Use contrastive search decoding')
+    parser.add_argument('--contrastive_penalty_alpha', type=float, default=0.6,
+                        help='Contrastive search penalty alpha')
+    parser.add_argument('--contrastive_top_k', type=int, default=4,
+                        help='Contrastive search top-k')
+    
+    # GNN decoder arguments
+    parser.add_argument('--gnn_type', type=str, default='gat',
+                        choices=['gat', 'gcn'],
+                        help='GNN type for gnn_decoder model')
+    parser.add_argument('--gnn_layers', type=int, default=3,
+                        help='Number of GNN layers')
+    parser.add_argument('--gnn_heads', type=int, default=8,
+                        help='Number of GNN attention heads')
+    parser.add_argument('--decoder_layers', type=int, default=6,
+                        help='Number of decoder layers (gnn_decoder)')
+    parser.add_argument('--decoder_heads', type=int, default=8,
+                        help='Number of decoder attention heads (gnn_decoder)')
+    parser.add_argument('--use_graph_structure', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Use graph structure in gnn_decoder model')
     
     # Data augmentation arguments
     parser.add_argument('--augment_questions', type=lambda x: (str(x).lower() == 'true'), default=False,
@@ -310,7 +370,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
     
     print("="*60)
-    print("KG Path Diffusion Model Training")
+    print(f"KG Path Generation Model Training ({args.model_type})")
     print("="*60)
     print(f"Train data: {args.train_data}")
     print(f"Val data: {args.val_data}")
@@ -364,25 +424,51 @@ def main():
     data_module.vocab.save(output_vocab_path)
     print(f"Saved vocabulary to {output_vocab_path}")
     
-    # Create model
-    print("\nCreating model...")
-    model = KGPathDiffusionLightning(
+    # Create model using factory
+    print(f"\nCreating {args.model_type} model...")
+    
+    # Prepare config dictionary
+    model_config = {
+        'hidden_dim': args.hidden_dim,
+        'question_encoder': args.question_encoder,
+        'freeze_question_encoder': args.freeze_question_encoder,
+        'num_diffusion_layers': args.num_diffusion_layers,
+        'num_layers': args.num_layers,
+        'num_heads': args.num_heads,
+        'num_diffusion_steps': args.num_diffusion_steps,
+        'max_path_length': args.max_path_length,
+        'dropout': args.dropout,
+        'learning_rate': args.learning_rate,
+        'weight_decay': args.weight_decay,
+        'warmup_steps': args.warmup_steps,
+        'max_steps': args.max_steps,
+        'use_entity_embeddings': args.use_entity_embeddings,
+        'predict_entities': args.predict_entities,
+        'augment_paths': args.augment_paths,
+        # Autoregressive parameters
+        'decoding_strategy': args.decoding_strategy,
+        'beam_width': args.beam_width,
+        'top_p': args.top_p,
+        'top_k': args.top_k,
+        'temperature': args.temperature,
+        'length_penalty': args.length_penalty,
+        'use_contrastive_search': args.use_contrastive_search,
+        'contrastive_penalty_alpha': args.contrastive_penalty_alpha,
+        'contrastive_top_k': args.contrastive_top_k,
+        # GNN decoder parameters
+        'gnn_type': args.gnn_type,
+        'gnn_layers': args.gnn_layers,
+        'gnn_heads': args.gnn_heads,
+        'decoder_layers': args.decoder_layers,
+        'decoder_heads': args.decoder_heads,
+        'use_graph_structure': args.use_graph_structure,
+    }
+    
+    model = create_model(
+        model_type=args.model_type,
         num_entities=num_entities,
         num_relations=num_relations,
-        hidden_dim=args.hidden_dim,
-        question_encoder_name=args.question_encoder,
-        freeze_question_encoder=args.freeze_question_encoder,
-        num_diffusion_layers=args.num_diffusion_layers,
-        num_heads=args.num_heads,
-        num_diffusion_steps=args.num_diffusion_steps,
-        max_path_length=args.max_path_length,
-        dropout=args.dropout,
-        learning_rate=args.learning_rate,
-        weight_decay=args.weight_decay,
-        warmup_steps=args.warmup_steps,
-        max_steps=args.max_steps,
-        use_entity_embeddings=args.use_entity_embeddings,
-        predict_entities=args.predict_entities
+        config=model_config
     )
     
     # Count parameters

@@ -1,0 +1,71 @@
+# Configuration for T5 (Text-to-Text Transfer Transformer) Model
+# Alternative to diffusion model for relation chain generation
+
+train_data: ../Data/webqsp_final/train.parquet
+val_data: ../Data/webqsp_final/val.parquet
+vocab_path: ../Data/webqsp_final/vocab.json
+
+# Model architecture selection
+model_type: t5  # Options: "diffusion", "autoregressive", "t5", "gnn_decoder", "hybrid"
+
+# T5 model configuration
+pretrained_model: t5-base  # Options: "t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"
+fine_tune: true  # Whether to fine-tune pretrained weights
+encoder_layers: 12  # Number of encoder layers (overrides pretrained if different)
+decoder_layers: 12  # Number of decoder layers (overrides pretrained if different)
+hidden_dim: 768  # Hidden dimension (t5-base uses 768, t5-large uses 1024)
+num_heads: 12  # Attention heads (t5-base uses 12, t5-large uses 16)
+dropout: 0.1
+
+# Decoding strategy
+decoding_strategy: beam_search
+beam_width: 5
+top_p: 0.9
+top_k: 50
+temperature: 1.0
+length_penalty: 0.6
+
+# Text handling
+max_question_length: 200
+max_path_length: 25
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# Data augmentation
+augment_questions: true
+question_word_dropout: 0.01
+question_word_swap_prob: 0.01
+question_random_delete_prob: 0.01
+
+augment_paths: true
+path_random_single_path: true
+path_max_paths: 20
+path_dropout_prob: 0.1
+
+# Training setup
+batch_size: 8
+num_workers: 0
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000000
+max_epochs: 500
+gradient_clip: 1.0
+accumulate_grad_batches: 1
+early_stopping_patience: 0
+
+# Hardware / logging
+gpus: 1
+precision: 16-mixed
+strategy: auto
+output_dir: outputs_t5
+experiment_name: kg_path_t5
+log_path_examples: true
+wandb: false
+wandb_project: kg-path-generation
+seed: 64
+resume: null
+debug: false
+
