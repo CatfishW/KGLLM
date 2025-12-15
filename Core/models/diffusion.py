@@ -826,6 +826,29 @@ class KGPathDiffusionLightning(pl.LightningModule):
             self.log('val/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         
         return outputs['loss']
+
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        outputs = self(batch)
+        
+        # Use on_epoch=True to ensure metrics are aggregated
+        self.log('test/loss', outputs['loss'], sync_dist=True, on_step=False, on_epoch=True)
+        self.log('test/entity_loss', outputs['entity_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        self.log('test/relation_loss', outputs['relation_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        
+        if 'num_paths_avg' in outputs:
+            self.log('test/num_paths_avg', outputs['num_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
+        
+        # Log path count prediction metrics
+        if 'path_count_loss' in outputs:
+            self.log('test/path_count_loss', outputs['path_count_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'diffusion_loss' in outputs:
+            self.log('test/diffusion_loss', outputs['diffusion_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'predicted_paths_avg' in outputs:
+            self.log('test/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'path_count_accuracy' in outputs:
+            self.log('test/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
+        
+        return outputs['loss']
     
     def configure_optimizers(self):
         # Separate parameters for different learning rates
