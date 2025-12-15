@@ -339,17 +339,19 @@ class KGPathDiffusionModel(nn.Module):
         num_paths_float = num_paths.float().clamp(min=1)
         sample_losses = losses_per_path.sum(dim=1) / num_paths_float
         
-        # Replace NaN with 0
+        # Replace NaN with a large penalty to prevent false best checkpoints
         if torch.isnan(sample_losses).any():
             sample_losses = torch.where(torch.isnan(sample_losses), 
-                                       torch.zeros_like(sample_losses), 
+                                       torch.zeros_like(sample_losses) + 100.0, 
                                        sample_losses)
         
         total_loss = sample_losses.mean()
         
         # Final NaN check
         if torch.isnan(total_loss):
-            total_loss = torch.tensor(0.0, device=device, requires_grad=True)
+            # Return a large finite value instead of 0.0 to avoid EarlyStopping confusion
+            # We use a leaf tensor with requires_grad=True to satisfy return types but block gradient flow
+            total_loss = torch.tensor(100.0, device=device, requires_grad=True)
         return {
             'loss': total_loss,
             'entity_loss': total_loss * 0.5 if self.predict_entities else torch.tensor(0.0, device=device),
@@ -405,7 +407,7 @@ class KGPathDiffusionModel(nn.Module):
                         r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
                         # Check for NaN
                         if torch.isnan(r_loss):
-                            r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                            r_loss = torch.tensor(100.0, device=device, requires_grad=True)
                 else:
                     r_loss = torch.tensor(0.0, device=device, requires_grad=True)
             
@@ -430,7 +432,7 @@ class KGPathDiffusionModel(nn.Module):
                         e_loss = F.cross_entropy(valid_e_logits, valid_e_targets, reduction='mean')
                         # Check for NaN
                         if torch.isnan(e_loss):
-                            e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                            e_loss = torch.tensor(100.0, device=device, requires_grad=True)
                     else:
                         e_loss = torch.tensor(0.0, device=device, requires_grad=True)
             else:

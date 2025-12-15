@@ -104,6 +104,8 @@ DEFAULTS = {
     'decoder_layers': 6,
     'decoder_heads': 8,
     'use_graph_structure': True,
+    'check_val_every_n_epoch': 1,
+    'val_check_interval': 1.0,
 }
 
 try:
@@ -236,6 +238,10 @@ def parse_args():
                         help='Gradient clipping value')
     parser.add_argument('--accumulate_grad_batches', type=int, default=1,
                         help='Gradient accumulation steps')
+    parser.add_argument('--check_val_every_n_epoch', type=int, default=1,
+                        help='Perform a validation loop every N training epochs')
+    parser.add_argument('--val_check_interval', type=float, default=1.0,
+                        help='How often to check the validation set within an epoch')
     parser.add_argument('--log_path_examples', type=lambda x: (str(x).lower() == 'true'), default=True,
                         help='Enable PathExamplesLogger callback to log predicted and ground truth paths')
     
@@ -575,7 +581,8 @@ def main():
         logger=logger,
         enable_progress_bar=True,
         log_every_n_steps=10,
-        val_check_interval=0.25,  # Validate 4 times per epoch
+        check_val_every_n_epoch=args.check_val_every_n_epoch,
+        val_check_interval=args.val_check_interval,
         fast_dev_run=args.debug,
         deterministic=True
     )
