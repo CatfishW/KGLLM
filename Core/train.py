@@ -506,7 +506,7 @@ def main():
         callbacks.append(
             ModelCheckpoint(
                 dirpath=os.path.join(args.output_dir, 'checkpoints'),
-                filename='kg_path_diffusion-{epoch:02d}-{val_loss:.4f}',
+                filename='kg_path_diffusion-{epoch:02d}-{val/loss:.4f}',
                 save_top_k=3,
                 monitor='val/loss',
                 mode='min',

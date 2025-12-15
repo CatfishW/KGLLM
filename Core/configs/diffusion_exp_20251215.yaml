@@ -1,7 +1,16 @@
-train_data: ../Data/webqsp_final/shortest_paths/train.parquet
-val_data: ../Data/webqsp_final/shortest_paths/val.parquet
-test_data: ../Data/webqsp_final/shortest_paths/test.parquet
-vocab_path: ../Data/webqsp_final/vocab.json
+train_data: 
+  - ../Data/webqsp_final/shortest_paths/train.parquet
+  - ../Data/CWQ/shortest_paths/train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/webqsp_rephrased_train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train.parquet
+val_data: 
+  - ../Data/webqsp_final/shortest_paths/val.parquet
+  - ../Data/CWQ/shortest_paths/val.parquet
+test_data: 
+  - ../Data/webqsp_final/shortest_paths/test.parquet
+  - ../Data/CWQ/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json # Rebuilt vocab from combined data
+
 
 # Model architecture
 hidden_dim: 256
@@ -54,8 +63,8 @@ val_check_interval: 1.0
 gpus: 1
 precision: 16-mixed
 strategy: auto
-output_dir: diffusion_exp_20251215
-experiment_name: diffusion_exp_20251215
+output_dir: diffusion_exp_20251215_CWQ_WebQSP
+experiment_name: diffusion_exp_20251215_CWQ_WebQSP
 log_path_examples: true
 wandb: false
 wandb_project: kg-path-diffusion

@@ -7,7 +7,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Union
 from dataclasses import dataclass
 import json
 import random
@@ -113,7 +113,7 @@ class KGPathDataset(Dataset):
     
     def __init__(
         self,
-        data_path: str,
+        data_path: Union[str, List[str]],
         vocab: Optional[EntityRelationVocab] = None,
         tokenizer_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         max_question_length: int = 64,
@@ -121,10 +121,10 @@ class KGPathDataset(Dataset):
         max_entities: int = 50000,
         max_relations: int = 5000,
         build_vocab: bool = False,
-        training: bool = True,  # If True, randomly sample paths; if False, use first path
+        training: bool = True,  # If True, randomly sample from ALL available paths for each sample.
         augmentation_config: Optional[Dict[str, Any]] = None,
     ):
-        self.data_path = Path(data_path)
+        self.data_path = data_path  # Can be str or List[str]
         self.max_question_length = max_question_length
         self.max_path_length = max_path_length
         self.max_entities = max_entities
@@ -142,10 +142,11 @@ class KGPathDataset(Dataset):
         # Build or use existing vocabulary
         if vocab is None:
             self.vocab = EntityRelationVocab(max_entities=max_entities, max_relations=max_relations)
-            if build_vocab:
-                self._build_vocab()
         else:
             self.vocab = vocab
+            
+        if build_vocab:
+            self._build_vocab()
 
     # =========================
     # Data augmentation helpers
@@ -200,12 +201,33 @@ class KGPathDataset(Dataset):
         return random.choice(paths)
     
     def _load_data(self) -> List[Dict]:
-        """Load data from parquet or jsonl file."""
-        if self.data_path.suffix == '.parquet':
-            df = pd.read_parquet(self.data_path)
-            samples = df.to_dict('records')
-            # Handle JSON-encoded fields in parquet
+        """Load data from parquet or jsonl file(s)."""
+        paths = self.data_path if isinstance(self.data_path, list) else [self.data_path]
+        all_samples = []
+
+        for p in paths:
+            path_obj = Path(p)
+            if not path_obj.exists():
+                print(f"Warning: Data file not found: {p}")
+                continue
+
+            if path_obj.suffix == '.parquet':
+                df = pd.read_parquet(path_obj)
+                samples = df.to_dict('records')
+            elif path_obj.suffix in ['.jsonl', '.json']:
+                samples = []
+                with open(path_obj, 'r', encoding='utf-8') as f:
+                    if path_obj.suffix == '.jsonl':
+                        for line in f:
+                            samples.append(json.loads(line))
+                    else:
+                        samples = json.load(f)
+            else:
+                raise ValueError(f"Unsupported file format: {path_obj.suffix}")
+            
+            # Post-processing for loaded samples
             for sample in samples:
+                # Handle JSON-encoded fields in parquet
                 for key in ['graph', 'paths', 'answer', 'q_entity', 'a_entity', 'shortest_gt_paths']:
                     if key in sample and isinstance(sample[key], str):
                         try:
@@ -221,26 +243,27 @@ class KGPathDataset(Dataset):
                 # Deduplicate by relation_chain
                 unique_paths = []
                 seen_chains = set()
-                for p in raw_paths:
-                    if isinstance(p, dict):
-                        chain = p.get('relation_chain', '')
+                for p_item in raw_paths:
+                    if isinstance(p_item, dict):
+                        chain = p_item.get('relation_chain', '')
                         if chain and chain not in seen_chains:
-                            unique_paths.append(p)
+                            unique_paths.append(p_item)
                             seen_chains.add(chain)
                 
                 sample['paths'] = unique_paths
-            return samples
-        elif self.data_path.suffix in ['.jsonl', '.json']:
-            samples = []
-            with open(self.data_path, 'r', encoding='utf-8') as f:
-                if self.data_path.suffix == '.jsonl':
-                    for line in f:
-                        samples.append(json.loads(line))
-                else:
-                    samples = json.load(f)
-            return samples
-        else:
-            raise ValueError(f"Unsupported file format: {self.data_path.suffix}")
+            
+            # Filter out samples with no paths if requested (usually for training)
+            # The user explicitly asked to "omit them in training dataset preprocessing"
+            valid_samples = [s for s in samples if s.get('paths')]
+            all_samples.extend(valid_samples)
+            
+            if len(paths) > 1:
+                print(f"Loaded {len(valid_samples)} valid samples (from {len(samples)} total) from {p}")
+
+        if len(paths) > 1:
+            print(f"Total samples loaded: {len(all_samples)}")
+            
+        return all_samples
     
     def _build_vocab(self):
         """Build vocabulary from dataset."""
@@ -593,9 +616,9 @@ class KGPathDataModule(pl.LightningDataModule):
     
     def __init__(
         self,
-        train_path: str,
-        val_path: Optional[str] = None,
-        test_path: Optional[str] = None,
+        train_path: Union[str, List[str]],
+        val_path: Optional[Union[str, List[str]]] = None,
+        test_path: Optional[Union[str, List[str]]] = None,
         vocab_path: Optional[str] = None,  # Path to pre-built vocabulary
         batch_size: int = 32,
         num_workers: int = 4,
@@ -627,67 +650,57 @@ class KGPathDataModule(pl.LightningDataModule):
     
     def setup(self, stage: Optional[str] = None):
         """Setup datasets and load/build vocabulary."""
-        if stage == 'fit' or stage is None:
-            # Load pre-built vocabulary if provided (recommended)
+        # Common setup for all stages if not already done
+        if self.vocab is None:
+            # Decide whether to build or load
             if self.vocab_path and Path(self.vocab_path).exists():
                 print(f"Loading pre-built vocabulary from {self.vocab_path}...")
                 self.vocab = EntityRelationVocab.load(self.vocab_path)
                 print(f"  Loaded {self.vocab.num_entities} entities, {self.vocab.num_relations} relations")
                 build_vocab = False
             else:
-                print("No pre-built vocabulary provided, building from training data...")
-                print("  Warning: This may cause UNK tokens for entities not in training data")
-                self.vocab = None
+                print("No pre-built vocabulary provided, building from training data (and val/test if avail)...")
+                self.vocab = EntityRelationVocab(max_entities=self.max_entities, max_relations=self.max_relations)
                 build_vocab = True
+
+            # If building vocab, we must load ALL available data to ensure coverage
+            # If just loading, we load what's needed for the stage
             
-            # Create training dataset
-            # training=True: randomly sample from all paths for data augmentation
-            self.train_dataset = KGPathDataset(
-                self.train_path,
-                vocab=self.vocab,
-                tokenizer_name=self.tokenizer_name,
-                max_question_length=self.max_question_length,
-                max_path_length=self.max_path_length,
-                max_entities=self.max_entities,
-                max_relations=self.max_relations,
-                build_vocab=build_vocab,
-                training=True,  # Randomly sample paths during training
-                augmentation_config=self.augmentation_config
-            )
+            # Helper to init dataset with current vocab settings
+            def load_split(path, is_training):
+                if not path: return None
+                return KGPathDataset(
+                    path,
+                    vocab=self.vocab,
+                    tokenizer_name=self.tokenizer_name,
+                    max_question_length=self.max_question_length,
+                    max_path_length=self.max_path_length,
+                    max_entities=self.max_entities,
+                    max_relations=self.max_relations,
+                    build_vocab=build_vocab, # Add to vocab if building
+                    training=is_training,
+                    augmentation_config=self.augmentation_config
+                )
+
+            # TRAIN
+            if self.train_path:
+                print("Loading Train dataset...")
+                self.train_dataset = load_split(self.train_path, True)
             
-            # Use the vocab from dataset if we built it
-            if build_vocab:
-                self.vocab = self.train_dataset.vocab
-            
+            # VAL
             if self.val_path:
-                # training=False: use first path for consistent evaluation
-                self.val_dataset = KGPathDataset(
-                    self.val_path,
-                    vocab=self.vocab,
-                    tokenizer_name=self.tokenizer_name,
-                    max_question_length=self.max_question_length,
-                    max_path_length=self.max_path_length,
-                    max_entities=self.max_entities,
-                    max_relations=self.max_relations,
-                    build_vocab=False,
-                    training=False,  # Use first path for consistent evaluation
-                    augmentation_config=self.augmentation_config
-                )
-        
-        if stage == 'test' or stage is None:
-            if self.test_path and self.vocab:
-                self.test_dataset = KGPathDataset(
-                    self.test_path,
-                    vocab=self.vocab,
-                    tokenizer_name=self.tokenizer_name,
-                    max_question_length=self.max_question_length,
-                    max_path_length=self.max_path_length,
-                    max_entities=self.max_entities,
-                    max_relations=self.max_relations,
-                    build_vocab=False,
-                    training=False,  # Use first path for consistent evaluation
-                    augmentation_config=self.augmentation_config
-                )
+                print("Loading Val dataset...")
+                self.val_dataset = load_split(self.val_path, False)
+
+            # TEST (Load now if building vocab, or if stage is test)
+            if self.test_path:
+                # If building vocab, we load test now to add its tokens
+                if build_vocab or stage == 'test':
+                    print("Loading Test dataset...")
+                    self.test_dataset = load_split(self.test_path, False)
+            
+            if build_vocab:
+                print(f"Final Vocabulary built: {self.vocab.num_entities} entities, {self.vocab.num_relations} relations")
     
     def train_dataloader(self):
         return DataLoader(
