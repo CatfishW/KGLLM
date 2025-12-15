@@ -745,6 +745,18 @@ class KGPathDiffusionLightning(pl.LightningModule):
             self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
         return outputs['loss']
+
+    def test_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
+        outputs = self(batch)
+        
+        self.log('test/loss', outputs['loss'], sync_dist=True)
+        self.log('test/entity_loss', outputs['entity_loss'], sync_dist=True)
+        self.log('test/relation_loss', outputs['relation_loss'], sync_dist=True)
+        
+        if 'num_paths_avg' in outputs:
+            self.log('test/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
+        
+        return outputs['loss']
     
     def configure_optimizers(self):
         # Separate parameters for different learning rates
