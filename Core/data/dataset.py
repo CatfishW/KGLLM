@@ -206,12 +206,29 @@ class KGPathDataset(Dataset):
             samples = df.to_dict('records')
             # Handle JSON-encoded fields in parquet
             for sample in samples:
-                for key in ['graph', 'paths', 'answer', 'q_entity', 'a_entity']:
+                for key in ['graph', 'paths', 'answer', 'q_entity', 'a_entity', 'shortest_gt_paths']:
                     if key in sample and isinstance(sample[key], str):
                         try:
                             sample[key] = json.loads(sample[key])
                         except:
                             pass
+                
+                # Prioritize shortest_gt_paths and deduplicate
+                raw_paths = sample.get('shortest_gt_paths', [])
+                if not raw_paths:
+                    raw_paths = sample.get('paths', [])
+                
+                # Deduplicate by relation_chain
+                unique_paths = []
+                seen_chains = set()
+                for p in raw_paths:
+                    if isinstance(p, dict):
+                        chain = p.get('relation_chain', '')
+                        if chain and chain not in seen_chains:
+                            unique_paths.append(p)
+                            seen_chains.add(chain)
+                
+                sample['paths'] = unique_paths
             return samples
         elif self.data_path.suffix in ['.jsonl', '.json']:
             samples = []
