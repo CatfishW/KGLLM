@@ -1,0 +1,17 @@
+num_entities: 1316471
+num_relations: 6097
+hidden_dim: 256
+question_encoder_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: false
+num_diffusion_layers: 4
+num_heads: 8
+num_diffusion_steps: 12
+max_path_length: 5
+dropout: 0.1
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000000
+use_multipath_training: true
+use_entity_embeddings: false
+predict_entities: false

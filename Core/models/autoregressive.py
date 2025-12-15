@@ -869,11 +869,12 @@ class KGPathAutoregressiveLightning(pl.LightningModule):
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         outputs = self(batch)
         
-        self.log('val/loss', outputs['loss'], prog_bar=True, sync_dist=True)
-        self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True)
+        # Use on_epoch=True to ensure metrics are aggregated and available for checkpointing
+        self.log('val/loss', outputs['loss'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
+        self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True, on_step=False, on_epoch=True)
         
         if 'num_paths_avg' in outputs:
-            self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
+            self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
         
         return outputs['loss']
     

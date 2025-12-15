@@ -7,7 +7,7 @@ hidden_dim: 256
 dropout: 0.1
 num_diffusion_layers: 2
 num_heads: 8
-num_diffusion_steps: 6
+num_diffusion_steps: 10
 
 # Optimization: Relation-only generation with frozen entity embeddings
 use_entity_embeddings: false
@@ -16,9 +16,9 @@ predict_entities: false
 # Text handling
 question_encoder: sentence-transformers/all-MiniLM-L6-v2
 tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
-freeze_question_encoder: false
+freeze_question_encoder: true
 max_question_length: 200
-max_path_length: 25
+max_path_length: 10  # Increased to allow longer predicted paths than ground truth
 
 max_vocab_size: 2000000000
 max_entities: 20000000000
@@ -32,7 +32,7 @@ question_random_delete_prob: 0.01 # Probability of deleting one random word
 
 augment_paths: true               # Enable path-level augmentation
 path_random_single_path: true     # Randomly choose a single target path per sample (legacy single-path output)
-path_max_paths: 20                # Maximum number of diverse paths kept per sample
+path_max_paths: 2                # Maximum number of diverse paths kept per sample
 path_dropout_prob: 0.1            # Probability of dropping each candidate path during selection
 
 # Training setup
@@ -51,11 +51,11 @@ early_stopping_patience: 0  # 0 or negative disables early stopping; set >0 to e
 gpus: 1
 precision: 16-mixed #16-mixed or 32-float
 strategy: auto
-output_dir: outputs_multipath_relation_only_4
-experiment_name: kg_path_relation_only_4
+output_dir: outputs_multipath_relation_only_8_freeze_question_encoder
+experiment_name: kg_path_relation_only_8_freeze_question_encoder
 log_path_examples: true          # Enable/disable logging of example paths via PathExamplesLogger
 wandb: false
 wandb_project: kg-path-diffusion
-seed: 64
+seed: 42
 resume: null #outputs_multipath_diffusion_relation_only/checkpoints/last.ckpt
 debug: false

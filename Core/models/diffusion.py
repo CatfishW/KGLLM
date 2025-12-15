@@ -19,6 +19,60 @@ from modules.diffusion import PathDiffusionTransformer, DiscreteDiffusion
 from .base import QuestionEncoder
 
 
+class PathCountPredictor(nn.Module):
+    """
+    Predicts the number of reasoning paths for a given question.
+    
+    This allows the model to generate a dynamic number of paths based on
+    the complexity of the question, matching the ground truth distribution.
+    """
+    
+    def __init__(
+        self,
+        hidden_dim: int = 256,
+        max_paths: int = 30,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.max_paths = max_paths
+        
+        # MLP to predict path count from question representation
+        self.predictor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim // 2, max_paths)  # Output logits for 1 to max_paths
+        )
+    
+    def forward(self, question_pooled: torch.Tensor) -> torch.Tensor:
+        """
+        Predict path count distribution.
+        
+        Args:
+            question_pooled: [B, hidden_dim] pooled question representation
+        
+        Returns:
+            logits: [B, max_paths] logits for each path count (1 to max_paths)
+        """
+        return self.predictor(question_pooled)
+    
+    def predict_count(self, question_pooled: torch.Tensor) -> torch.Tensor:
+        """
+        Get predicted path count (argmax + 1, since index 0 = 1 path).
+        
+        Args:
+            question_pooled: [B, hidden_dim]
+        
+        Returns:
+            counts: [B] predicted number of paths (1 to max_paths)
+        """
+        logits = self.forward(question_pooled)
+        return logits.argmax(dim=-1) + 1  # +1 because index 0 = 1 path
+
+
 class KGPathDiffusionModel(nn.Module):
     """
     Full model for KG Path Generation using Discrete Diffusion.
@@ -51,6 +105,13 @@ class KGPathDiffusionModel(nn.Module):
         self.max_path_length = max_path_length
         self.predict_entities = predict_entities
         self.use_entity_embeddings = use_entity_embeddings
+        
+        # Path count predictor (predicts how many paths to generate)
+        self.path_count_predictor = PathCountPredictor(
+            hidden_dim=hidden_dim,
+            max_paths=30,  # Maximum 30 paths
+            dropout=dropout
+        )
         
         # Question encoder
         self.question_encoder = QuestionEncoder(
@@ -159,10 +220,14 @@ class KGPathDiffusionModel(nn.Module):
         all_target_entities: torch.Tensor,
         all_target_relations: torch.Tensor,
         all_path_lengths: torch.Tensor,
-        num_paths: torch.Tensor
+        num_paths: torch.Tensor,
+        path_count_loss_weight: float = 0.1
     ) -> Dict[str, torch.Tensor]:
         """
         Multi-path training forward pass.
+        
+        Args:
+            path_count_loss_weight: Weight for path count prediction loss
         """
         B = question_input_ids.shape[0]
         max_paths = all_target_entities.shape[1]
@@ -174,6 +239,13 @@ class KGPathDiffusionModel(nn.Module):
         question_seq, question_pooled = self.encode_inputs(
             question_input_ids, question_attention_mask
         )
+        
+        # Predict path count and compute loss
+        path_count_logits = self.path_count_predictor(question_pooled)
+        # Target: num_paths - 1 (since index 0 = 1 path)
+        # Clamp to valid range [0, max_paths-1]
+        path_count_targets = (num_paths - 1).clamp(0, self.path_count_predictor.max_paths - 1)
+        path_count_loss = F.cross_entropy(path_count_logits, path_count_targets)
         
         # Expand encoded inputs for all paths
         # [B, ...] -> [B * max_paths, ...]
@@ -211,7 +283,7 @@ class KGPathDiffusionModel(nn.Module):
         valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
         valid_path_mask_flat = valid_path_mask.reshape(B * max_paths)
         
-        return self._forward_diffusion_multipath(
+        diffusion_losses = self._forward_diffusion_multipath(
             question_seq_expanded,
             flat_entities,
             flat_relations,
@@ -223,6 +295,25 @@ class KGPathDiffusionModel(nn.Module):
             max_paths,
             num_paths
         )
+        
+        # Combine diffusion loss with path count loss
+        total_loss = diffusion_losses['loss'] + path_count_loss_weight * path_count_loss
+        
+        # Compute predicted path count for logging
+        with torch.no_grad():
+            predicted_counts = path_count_logits.argmax(dim=-1) + 1
+            count_accuracy = (predicted_counts == num_paths).float().mean()
+        
+        return {
+            'loss': total_loss,
+            'diffusion_loss': diffusion_losses['loss'],
+            'path_count_loss': path_count_loss,
+            'entity_loss': diffusion_losses['entity_loss'],
+            'relation_loss': diffusion_losses['relation_loss'],
+            'num_paths_avg': num_paths.float().mean(),
+            'predicted_paths_avg': predicted_counts.float().mean(),
+            'path_count_accuracy': count_accuracy
+        }
 
     def _forward_diffusion_multipath(
         self,
@@ -434,11 +525,12 @@ class KGPathDiffusionModel(nn.Module):
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        num_paths: int = 5,
+        num_paths: Optional[int] = None,
         path_length: int = 10,
         temperature: float = 1.0,
-        diversity_penalty: float = 0.5
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        diversity_penalty: float = 0.5,
+        use_predicted_count: bool = True
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate multiple diverse reasoning paths.
         
@@ -448,16 +540,16 @@ class KGPathDiffusionModel(nn.Module):
         Args:
             question_input_ids: [B, seq_len]
             question_attention_mask: [B, seq_len]
-            num_paths: Number of paths to generate per sample
+            num_paths: Number of paths to generate per sample (if None, uses predicted count)
             path_length: Maximum length of each generated path
             temperature: Sampling temperature (higher = more diverse)
             diversity_penalty: Penalty for repeating entities/relations
-            split_long_paths: If True, split long paths into multiple shorter paths
-            max_path_length: Maximum length per path when splitting
+            use_predicted_count: If True and num_paths is None, predict num_paths from question
         
         Returns:
-            all_entities: [B, num_paths, path_length]
-            all_relations: [B, num_paths, path_length-1]
+            all_entities: [B, max_num_paths, path_length]
+            all_relations: [B, max_num_paths, path_length-1]
+            actual_num_paths: [B] actual number of paths generated for each sample
         """
         B = question_input_ids.shape[0]
         device = question_input_ids.device
@@ -467,14 +559,27 @@ class KGPathDiffusionModel(nn.Module):
             question_input_ids, question_attention_mask
         )
         
-        # Generate multiple paths
-        all_entities = []
-        all_relations = []
+        # Determine number of paths to generate
+        if num_paths is None and use_predicted_count:
+            # Predict path count from question
+            predicted_counts = self.path_count_predictor.predict_count(question_pooled)
+            max_num_paths = predicted_counts.max().item()
+        elif num_paths is not None:
+            predicted_counts = torch.full((B,), num_paths, dtype=torch.long, device=device)
+            max_num_paths = num_paths
+        else:
+            # Default to 5 paths
+            predicted_counts = torch.full((B,), 5, dtype=torch.long, device=device)
+            max_num_paths = 5
+        
+        # Generate paths for each sample (up to their predicted count)
+        all_entities_list = []
+        all_relations_list = []
         
         # Track generated final entities to encourage diversity
         generated_targets = torch.zeros(B, self.num_entities, device=device)
         
-        for path_idx in range(num_paths):
+        for path_idx in range(max_num_paths):
             # Adjust temperature based on diversity penalty
             if path_idx > 0 and diversity_penalty > 0:
                 # Use higher temperature for subsequent paths
@@ -491,21 +596,19 @@ class KGPathDiffusionModel(nn.Module):
                 temperature=curr_temp
             )
             
-            all_entities.append(entities)
-            all_relations.append(relations)
+            all_entities_list.append(entities)
+            all_relations_list.append(relations)
             
             # Update generated targets (penalize same final entity)
             final_entities = entities[:, -1]
             for b in range(B):
                 generated_targets[b, final_entities[b]] += 1
         
-        # Stack results: [B, num_paths, path_length]
-        # If we split paths, we might have more than num_paths
-        # Stack results: [B, num_paths, path_length]
-        all_entities = torch.stack(all_entities, dim=1)
-        all_relations = torch.stack(all_relations, dim=1)
+        # Stack results: [B, max_num_paths, path_length]
+        all_entities = torch.stack(all_entities_list, dim=1)
+        all_relations = torch.stack(all_relations_list, dim=1)
         
-        return all_entities, all_relations
+        return all_entities, all_relations, predicted_counts
 
 
 class KGPathDiffusionLightning(pl.LightningModule):
@@ -689,17 +792,38 @@ class KGPathDiffusionLightning(pl.LightningModule):
         if 'num_paths_avg' in outputs:
             self.log('train/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
+        # Log path count prediction metrics
+        if 'path_count_loss' in outputs:
+            self.log('train/path_count_loss', outputs['path_count_loss'], sync_dist=True)
+        if 'diffusion_loss' in outputs:
+            self.log('train/diffusion_loss', outputs['diffusion_loss'], sync_dist=True)
+        if 'predicted_paths_avg' in outputs:
+            self.log('train/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True)
+        if 'path_count_accuracy' in outputs:
+            self.log('train/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True)
+        
         return outputs['loss']
     
     def validation_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
         outputs = self(batch)
         
-        self.log('val/loss', outputs['loss'], prog_bar=True, sync_dist=True)
-        self.log('val/entity_loss', outputs['entity_loss'], sync_dist=True)
-        self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True)
+        # Use on_epoch=True to ensure metrics are aggregated and available for checkpointing
+        self.log('val/loss', outputs['loss'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
+        self.log('val/entity_loss', outputs['entity_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True, on_step=False, on_epoch=True)
         
         if 'num_paths_avg' in outputs:
-            self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
+            self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
+        
+        # Log path count prediction metrics
+        if 'path_count_loss' in outputs:
+            self.log('val/path_count_loss', outputs['path_count_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'diffusion_loss' in outputs:
+            self.log('val/diffusion_loss', outputs['diffusion_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'predicted_paths_avg' in outputs:
+            self.log('val/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'path_count_accuracy' in outputs:
+            self.log('val/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         
         return outputs['loss']
     

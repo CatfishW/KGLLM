@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KG Path Generation via Discrete Diffusion</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 40px 20px;
+        }
+
+        .figure-container {
+            background: #ffffff;
+            border-radius: 16px;
+            padding: 50px 60px;
+            max-width: 1300px;
+            width: 100%;
+            box-shadow: 0 25px 80px rgba(0,0,0,0.25);
+        }
+
+        .figure-title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 10px;
+            letter-spacing: -0.5px;
+        }
+
+        .figure-subtitle {
+            text-align: center;
+            font-size: 13px;
+            color: #6b7280;
+            margin-bottom: 45px;
+        }
+
+        .main-diagram {
+            display: flex;
+            align-items: stretch;
+            gap: 0;
+            position: relative;
+        }
+
+        /* Section Containers */
+        .section {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+
+        .section-label {
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: #9ca3af;
+            margin-bottom: 15px;
+        }
+
+        /* Input Section */
+        .input-section {
+            flex: 0 0 200px;
+        }
+
+        .question-box {
+            background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%);
+            border: 2px solid #0ea5e9;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            position: relative;
+        }
+
+        .question-icon {
+            width: 36px;
+            height: 36px;
+            background: #0ea5e9;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px;
+            color: white;
+            font-size: 18px;
+        }
+
+        .question-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #0369a1;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .question-text {
+            font-size: 12px;
+            color: #334155;
+            font-style: italic;
+            line-height: 1.4;
+        }
+
+        /* Arrow Connector */
+        .arrow-connector {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0 15px;
+            position: relative;
+        }
+
+        .arrow-line {
+            width: 60px;
+            height: 2px;
+            background: linear-gradient(90deg, #cbd5e1, #94a3b8);
+            position: relative;
+        }
+
+        .arrow-line::after {
+            content: '';
+            position: absolute;
+            right: -1px;
+            top: 50%;
+            transform: translateY(-50%);
+            border: 6px solid transparent;
+            border-left: 8px solid #94a3b8;
+        }
+
+        .arrow-label {
+            position: absolute;
+            top: -18px;
+            font-size: 9px;
+            color: #6b7280;
+            white-space: nowrap;
+        }
+
+        /* Encoder Section */
+        .encoder-section {
+            flex: 0 0 180px;
+        }
+
+        .encoder-box {
+            background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%);
+            border: 2px solid #eab308;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+
+        .encoder-icon {
+            width: 36px;
+            height: 36px;
+            background: #eab308;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 12px;
+            color: white;
+            font-size: 16px;
+            font-weight: bold;
+        }
+
+        .encoder-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #a16207;
+            margin-bottom: 6px;
+        }
+
+        .encoder-detail {
+            font-size: 10px;
+            color: #78716c;
+        }
+
+        .output-tensors {
+            margin-top: 15px;
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+        }
+
+        .tensor-tag {
+            background: #fef3c7;
+            border: 1px solid #fcd34d;
+            border-radius: 6px;
+            padding: 4px 10px;
+            font-size: 10px;
+            font-weight: 500;
+            color: #92400e;
+        }
+
+        /* Central Diffusion Section */
+        .diffusion-section {
+            flex: 1;
+            max-width: 480px;
+        }
+
+        .diffusion-container {
+            background: linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%);
+            border: 2px solid #a855f7;
+            border-radius: 16px;
+            padding: 25px;
+            position: relative;
+        }
+
+        .diffusion-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .diffusion-icon {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #a855f7, #7c3aed);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 14px;
+        }
+
+        .diffusion-title {
+            font-size: 14px;
+            font-weight: 700;
+            color: #6b21a8;
+        }
+
+        .diffusion-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .input-block {
+            background: white;
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            border: 1px solid #e9d5ff;
+        }
+
+        .input-block-label {
+            font-size: 9px;
+            font-weight: 600;
+            color: #7c3aed;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 6px;
+        }
+
+        .input-block-content {
+            font-size: 11px;
+            color: #4b5563;
+        }
+
+        .noisy-tokens {
+            display: flex;
+            gap: 4px;
+            justify-content: center;
+            margin-top: 6px;
+        }
+
+        .token {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 9px;
+            font-weight: 600;
+        }
+
+        .token-mask {
+            background: #ddd6fe;
+            color: #7c3aed;
+        }
+
+        .token-rel {
+            background: #c4b5fd;
+            color: #5b21b6;
+        }
+
+        .transformer-blocks {
+            background: white;
+            border-radius: 12px;
+            padding: 15px;
+            border: 1px solid #e9d5ff;
+        }
+
+        .block-row {
+            display: flex;
+            align-items: center;
+            padding: 8px 12px;
+            margin: 4px 0;
+            border-radius: 8px;
+            font-size: 11px;
+            transition: all 0.2s;
+        }
+
+        .block-attn {
+            background: linear-gradient(90deg, #fef3c7, #fde68a);
+            border-left: 3px solid #f59e0b;
+        }
+
+        .block-cross {
+            background: linear-gradient(90deg, #dbeafe, #bfdbfe);
+            border-left: 3px solid #3b82f6;
+        }
+
+        .block-ffn {
+            background: linear-gradient(90deg, #dcfce7, #bbf7d0);
+            border-left: 3px solid #22c55e;
+        }
+
+        .block-label {
+            flex: 1;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .badge {
+            font-size: 8px;
+            font-weight: 700;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+        }
+
+        .badge-adaln {
+            background: #7c3aed;
+            color: white;
+        }
+
+        .badge-qseq {
+            background: #3b82f6;
+            color: white;
+        }
+
+        .blocks-multiply {
+            text-align: center;
+            font-size: 11px;
+            color: #6b7280;
+            margin-top: 10px;
+            font-weight: 500;
+        }
+
+        .output-logits {
+            background: linear-gradient(135deg, #f0abfc, #e879f9);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+            margin-top: 15px;
+        }
+
+        .output-logits-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: white;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .output-logits-content {
+            font-size: 12px;
+            color: white;
+            margin-top: 4px;
+        }
+
+        /* Path Count Predictor */
+        .predictor-branch {
+            position: absolute;
+            top: -60px;
+            right: 30px;
+            background: linear-gradient(135deg, #fff7ed, #ffedd5);
+            border: 2px solid #f97316;
+            border-radius: 10px;
+            padding: 12px 18px;
+            text-align: center;
+        }
+
+        .predictor-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #c2410c;
+            margin-bottom: 4px;
+        }
+
+        .predictor-content {
+            font-size: 11px;
+            color: #57534e;
+        }
+
+        .predictor-arrow {
+            position: absolute;
+            bottom: -20px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 2px;
+            height: 18px;
+            background: #f97316;
+        }
+
+        .predictor-arrow::after {
+            content: '';
+            position: absolute;
+            bottom: -1px;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top: 6px solid #f97316;
+        }
+
+        /* Output Section */
+        .output-section {
+            flex: 0 0 200px;
+        }
+
+        .output-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .sampling-box {
+            background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%);
+            border: 2px solid #10b981;
+            border-radius: 12px;
+            padding: 18px;
+            text-align: center;
+        }
+
+        .sampling-icon {
+            width: 32px;
+            height: 32px;
+            background: #10b981;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 10px;
+            color: white;
+            font-size: 14px;
+        }
+
+        .sampling-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #047857;
+            margin-bottom: 6px;
+        }
+
+        .sampling-detail {
+            font-size: 10px;
+            color: #4b5563;
+            line-height: 1.4;
+        }
+
+        .paths-box {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            border: 2px solid #3b82f6;
+            border-radius: 12px;
+            padding: 15px;
+        }
+
+        .paths-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #1d4ed8;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .path-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            background: white;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 9px;
+        }
+
+        .path-num {
+            width: 16px;
+            height: 16px;
+            background: #3b82f6;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 8px;
+        }
+
+        .path-rels {
+            color: #374151;
+            font-family: 'Fira Code', monospace;
+        }
+
+        .kg-box {
+            background: linear-gradient(135deg, #fef2f2 0%, #fee2e2 100%);
+            border: 2px solid #ef4444;
+            border-radius: 12px;
+            padding: 18px;
+            text-align: center;
+        }
+
+        .kg-icon {
+            width: 32px;
+            height: 32px;
+            background: #ef4444;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 10px;
+            color: white;
+            font-size: 14px;
+        }
+
+        .kg-title {
+            font-size: 11px;
+            font-weight: 600;
+            color: #b91c1c;
+            margin-bottom: 6px;
+        }
+
+        .kg-result {
+            font-size: 10px;
+            color: #374151;
+        }
+
+        .answer-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            justify-content: center;
+            margin-top: 8px;
+        }
+
+        .answer-tag {
+            background: #fecaca;
+            border: 1px solid #f87171;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-size: 9px;
+            color: #991b1b;
+            font-weight: 500;
+        }
+
+        /* Vertical arrows between output boxes */
+        .vertical-arrow {
+            height: 20px;
+            display: flex;
+            justify-content: center;
+            position: relative;
+        }
+
+        .vertical-arrow::before {
+            content: '';
+            width: 2px;
+            height: 100%;
+            background: #94a3b8;
+        }
+
+        .vertical-arrow::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            border: 5px solid transparent;
+            border-top: 6px solid #94a3b8;
+        }
+
+        /* Legend */
+        .legend {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 40px;
+            padding-top: 25px;
+            border-top: 1px solid #e5e7eb;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 11px;
+            color: #6b7280;
+        }
+
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 4px;
+            border: 1px solid rgba(0,0,0,0.1);
+        }
+
+        /* Equations box */
+        .equations-section {
+            margin-top: 35px;
+            padding: 20px 25px;
+            background: #f9fafb;
+            border-radius: 12px;
+            border: 1px solid #e5e7eb;
+        }
+
+        .equations-title {
+            font-size: 12px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 15px;
+            text-align: center;
+        }
+
+        .equations-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+
+        .equation-item {
+            text-align: center;
+        }
+
+        .equation-label {
+            font-size: 10px;
+            font-weight: 600;
+            color: #6b7280;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .equation-math {
+            font-family: 'Times New Roman', serif;
+            font-size: 13px;
+            color: #1f2937;
+            font-style: italic;
+        }
+
+    </style>
+</head>
+<body>
+
+<div class="figure-container">
+    <h1 class="figure-title">Knowledge Graph Path Generation via Discrete Diffusion</h1>
+    <p class="figure-subtitle">Generating diverse reasoning paths from questions using masked diffusion over relation sequences</p>
+
+    <div class="main-diagram">
+        <!-- Input Section -->
+        <div class="section input-section">
+            <div class="section-label">Input</div>
+            <div class="question-box">
+                <div class="question-icon">?</div>
+                <div class="question-label">Question q</div>
+                <div class="question-text">"What sports are played in Canada?"</div>
+            </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="arrow-connector">
+            <div class="arrow-line"></div>
+        </div>
+
+        <!-- Encoder Section -->
+        <div class="section encoder-section">
+            <div class="section-label">Encoder</div>
+            <div class="encoder-box">
+                <div class="encoder-icon">E</div>
+                <div class="encoder-title">Question Encoder</div>
+                <div class="encoder-detail">Sentence-BERT<br>(MiniLM-L6-v2)</div>
+                <div class="output-tensors">
+                    <span class="tensor-tag">Q<sub>seq</sub></span>
+                    <span class="tensor-tag">Q<sub>pool</sub></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="arrow-connector">
+            <div class="arrow-line"></div>
+            <div class="arrow-label">condition</div>
+        </div>
+
+        <!-- Diffusion Section -->
+        <div class="section diffusion-section">
+            <div class="section-label">Discrete Diffusion</div>
+            
+            <!-- Path Count Predictor -->
+            <div class="predictor-branch">
+                <div class="predictor-label">Path Count Predictor</div>
+                <div class="predictor-content">MLP → k ∈ [1, 30]</div>
+                <div class="predictor-arrow"></div>
+            </div>
+
+            <div class="diffusion-container">
+                <div class="diffusion-header">
+                    <div class="diffusion-icon">∿</div>
+                    <div class="diffusion-title">Path Diffusion Transformer</div>
+                </div>
+
+                <div class="diffusion-grid">
+                    <div class="input-block">
+                        <div class="input-block-label">Time Embedding</div>
+                        <div class="input-block-content">Sinusoidal → MLP</div>
+                        <div class="noisy-tokens" style="margin-top: 8px;">
+                            <span style="font-size: 10px; color: #7c3aed;">t = 1...T</span>
+                        </div>
+                    </div>
+                    <div class="input-block">
+                        <div class="input-block-label">Noisy Relations r<sub>t</sub></div>
+                        <div class="noisy-tokens">
+                            <span class="token token-mask">M</span>
+                            <span class="token token-rel">r₁</span>
+                            <span class="token token-mask">M</span>
+                            <span class="token token-mask">M</span>
+                            <span class="token token-rel">r₄</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="transformer-blocks">
+                    <div class="block-row block-attn">
+                        <span class="block-label">Self-Attention</span>
+                        <span class="badge badge-adaln">AdaLN</span>
+                    </div>
+                    <div class="block-row block-cross">
+                        <span class="block-label">Cross-Attention</span>
+                        <span class="badge badge-qseq">Q<sub>seq</sub></span>
+                    </div>
+                    <div class="block-row block-ffn">
+                        <span class="block-label">Feed-Forward Network</span>
+                        <span class="badge badge-adaln">AdaLN</span>
+                    </div>
+                    <div class="blocks-multiply">× 6 Transformer Blocks</div>
+                </div>
+
+                <div class="output-logits">
+                    <div class="output-logits-label">Output</div>
+                    <div class="output-logits-content">Predict p(r₀ | r<sub>t</sub>, Q, t)</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Arrow -->
+        <div class="arrow-connector">
+            <div class="arrow-line"></div>
+            <div class="arrow-label">sample</div>
+        </div>
+
+        <!-- Output Section -->
+        <div class="section output-section">
+            <div class="section-label">Inference</div>
+            <div class="output-stack">
+                <div class="sampling-box">
+                    <div class="sampling-icon">↻</div>
+                    <div class="sampling-title">Reverse Diffusion</div>
+                    <div class="sampling-detail">t: T → 1<br>Iterative unmasking<br>τ<sub>i</sub> = τ₀ · (1 + αi)</div>
+                </div>
+
+                <div class="vertical-arrow"></div>
+
+                <div class="paths-box">
+                    <div class="paths-title">Generated Paths (k)</div>
+                    <div class="path-item">
+                        <span class="path-num">1</span>
+                        <span class="path-rels">team.loc → team.sport</span>
+                    </div>
+                    <div class="path-item">
+                        <span class="path-num">2</span>
+                        <span class="path-rels">country.sport</span>
+                    </div>
+                    <div class="path-item">
+                        <span class="path-num">3</span>
+                        <span class="path-rels">athlete.nat → plays</span>
+                    </div>
+                </div>
+
+                <div class="vertical-arrow"></div>
+
+                <div class="kg-box">
+                    <div class="kg-icon">⬡</div>
+                    <div class="kg-title">KG Traversal</div>
+                    <div class="kg-result">Topic Entity + Paths → Answers</div>
+                    <div class="answer-tags">
+                        <span class="answer-tag">Ice Hockey</span>
+                        <span class="answer-tag">Lacrosse</span>
+                        <span class="answer-tag">Curling</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Equations -->
+    <div class="equations-section">
+        <div class="equations-title">Key Equations</div>
+        <div class="equations-grid">
+            <div class="equation-item">
+                <div class="equation-label">Forward Process</div>
+                <div class="equation-math">p<sub>mask</sub>(t) = 1 − α̅<sub>t</sub></div>
+            </div>
+            <div class="equation-item">
+                <div class="equation-label">Diffusion Loss</div>
+                <div class="equation-math">ℒ<sub>diff</sub> = −Σ log p<sub>θ</sub>(r₀ | r<sub>t</sub>, Q, t)</div>
+            </div>
+            <div class="equation-item">
+                <div class="equation-label">Total Loss</div>
+                <div class="equation-math">ℒ = ℒ<sub>diff</sub> + 0.1 · ℒ<sub>count</sub></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="legend">
+        <div class="legend-item">
+            <div class="legend-color" style="background: linear-gradient(135deg, #fef9c3, #eab308);"></div>
+            <span>Frozen Encoder</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: linear-gradient(135deg, #f3e8ff, #a855f7);"></div>
+            <span>Trainable Diffusion</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: linear-gradient(135deg, #ffedd5, #f97316);"></div>
+            <span>Path Count MLP</span>
+        </div>
+        <div class="legend-item">
+            <div class="legend-color" style="background: linear-gradient(135deg, #fee2e2, #ef4444);"></div>
+            <span>Deterministic KG Ops</span>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

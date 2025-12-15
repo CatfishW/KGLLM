@@ -14,7 +14,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from data.dataset import KGPathDataset, EntityRelationVocab, collate_kg_batch
-from kg_path_diffusion import KGPathDiffusionLightning
+from models.diffusion import KGPathDiffusionLightning
 from torch.utils.data import DataLoader
 
 
@@ -188,34 +188,49 @@ def evaluate_model(
     # Collect predictions and ground truth
     all_predictions = []  # Primary prediction (first)
     all_predictions_list = []  # All predictions for Hits@K
-    all_ground_truth = []
+    all_ground_truth = []  # Ground truth relation chains
+    all_ground_truth_full = []  # Ground truth full paths with entities
     all_questions = []
     all_answers = []
+    all_answer_entities = []  # Answer entities (a_entity)
+    all_predicted_counts = []  # Predicted path counts
+    all_gt_counts = []  # Ground truth path counts
     
     with torch.no_grad():
         for batch_idx, batch in enumerate(tqdm(dataloader, desc="Evaluating")):
             batch['question_input_ids'] = batch['question_input_ids'].to(device)
             batch['question_attention_mask'] = batch['question_attention_mask'].to(device)
             
-            # Generate multiple paths per question
-            # Use split_long_paths to get multiple shorter paths instead of one long path
-            all_entities, all_relations = model.model.generate_multiple(
+            # Generate multiple paths per question with dynamic count prediction
+            # Ground truth paths typically have 1-3 relations (mean ~2.8)
+            # Use path_length=5 to generate paths with up to 4 relations
+            # use_predicted_count=True will use the model's path count predictor
+            result = model.model.generate_multiple(
                 batch['question_input_ids'],
                 batch['question_attention_mask'],
-                num_paths=num_samples,
-                path_length=20,
+                num_paths=None,  # Use predicted count
+                path_length=3,  # Generate short paths matching ground truth (1-4 relations)
                 temperature=1.0,
-                split_long_paths=True,
-                max_path_length=5  # Split into paths of max 5 relations
+                use_predicted_count=False
             )
+            
+            # Handle both old (2-tuple) and new (3-tuple) return formats
+            if len(result) == 3:
+                all_entities, all_relations, predicted_counts = result
+            else:
+                all_entities, all_relations = result
+                predicted_counts = torch.full((batch['question_input_ids'].shape[0],), num_samples, dtype=torch.long)
             
             # Decode predictions
             for i in range(batch['question_input_ids'].shape[0]):
                 sample_id = batch['ids'][i]
+                predicted_count = predicted_counts[i].item() if predicted_counts is not None else num_samples
                 
                 # Get all generated relation chains for this sample
                 pred_relations_list = []
-                for path_idx in range(num_samples):
+                for path_idx in range(predicted_count):
+                    if path_idx >= all_relations.shape[1]:
+                        break
                     relations = all_relations[i, path_idx]
                     
                     # Split long path into multiple shorter paths
@@ -263,21 +278,38 @@ def evaluate_model(
                 
                 gt_paths = sample.get('paths', [])
                 gt_relations_list = []
+                gt_full_paths_list = []  # Full paths with entities
                 for path in gt_paths:
                     if isinstance(path, dict):
                         rel_chain = path.get('relation_chain', '')
                         if rel_chain:
                             gt_relations_list.append(rel_chain)
+                        # Also get full path with entities
+                        full_path = path.get('full_path', '')
+                        if full_path:
+                            gt_full_paths_list.append(full_path)
                     elif isinstance(path, str):
                         # Handle string format
                         gt_relations_list.append(path)
+                
+                # Get answer entities
+                answer_entities = sample.get('a_entity', [])
+                if isinstance(answer_entities, str):
+                    answer_entities = [answer_entities]
+                
+                # Get ground truth path count
+                gt_count = len(gt_relations_list) if gt_relations_list else 0
                 
                 # Store primary prediction (first path) and all paths as list
                 all_predictions.append(primary_pred)
                 all_predictions_list.append(pred_relations_list)  # This is already a list of paths
                 all_ground_truth.append(gt_relations_list)
+                all_ground_truth_full.append(gt_full_paths_list)
                 all_questions.append(sample.get('question', ''))
                 all_answers.append(sample.get('answer', []))
+                all_answer_entities.append(answer_entities)
+                all_predicted_counts.append(predicted_count)
+                all_gt_counts.append(gt_count)
     
     # Calculate metrics
     print("\n" + "=" * 70)
@@ -288,12 +320,22 @@ def evaluate_model(
     hits_at_5 = calculate_hits_at_k(all_predictions_list, all_ground_truth, k=5)
     recall_metrics = calculate_recall(all_predictions, all_ground_truth)
     
+    # Calculate path count accuracy
+    count_matches = sum(1 for pred, gt in zip(all_predicted_counts, all_gt_counts) 
+                       if pred == gt or (gt == 0 and pred == 1))  # If no GT, predicting 1 is acceptable
+    count_accuracy = count_matches / len(all_predicted_counts) if all_predicted_counts else 0.0
+    avg_predicted_count = sum(all_predicted_counts) / len(all_predicted_counts) if all_predicted_counts else 0.0
+    avg_gt_count = sum(all_gt_counts) / len(all_gt_counts) if all_gt_counts else 0.0
+    
     metrics = {
         'hits_at_1': hits_at_1,
         'hits_at_5': hits_at_5,
         **recall_metrics,
         'total_samples': len(all_predictions),
-        'samples_with_gt': sum(1 for gt in all_ground_truth if gt)
+        'samples_with_gt': sum(1 for gt in all_ground_truth if gt),
+        'path_count_accuracy': count_accuracy,
+        'avg_predicted_count': avg_predicted_count,
+        'avg_gt_count': avg_gt_count
     }
     
     # Print metrics
@@ -302,6 +344,9 @@ def evaluate_model(
     print(f"Exact Recall: {recall_metrics['exact_recall']:.4f}")
     print(f"Partial Recall: {recall_metrics['partial_recall']:.4f}")
     print(f"Avg Relation Overlap: {recall_metrics['avg_relation_overlap']:.4f}")
+    print(f"Path Count Accuracy: {count_accuracy:.4f}")
+    print(f"Avg Predicted Count: {avg_predicted_count:.2f}")
+    print(f"Avg Ground Truth Count: {avg_gt_count:.2f}")
     print(f"Total Samples: {metrics['total_samples']}")
     print(f"Samples with Ground Truth: {metrics['samples_with_gt']}")
     
@@ -315,6 +360,7 @@ def evaluate_model(
         print(f"\n--- Example {i+1} ---")
         print(f"Question: {all_questions[i]}")
         print(f"Answer: {all_answers[i]}")
+        print(f"Path Count: Predicted={all_predicted_counts[i]}, GT={all_gt_counts[i]}")
         
         # Show all predicted paths (list format, matching ground truth)
         if all_predictions_list[i]:
@@ -353,10 +399,14 @@ def evaluate_model(
     
     return {
         'metrics': metrics,
-        'predictions': all_predictions,
+        'predictions': all_predictions_list,  # Return list of paths to match ground_truth format
         'ground_truth': all_ground_truth,
+        'ground_truth_full': all_ground_truth_full,  # Full paths with entities
         'questions': all_questions,
-        'answers': all_answers
+        'answers': all_answers,
+        'answer_entities': all_answer_entities,  # Answer entities (a_entity)
+        'predicted_counts': all_predicted_counts,
+        'gt_counts': all_gt_counts
     }
 
 
@@ -370,14 +420,14 @@ def main():
                         help='Path to test data')
     parser.add_argument('--batch_size', type=int, default=8,
                         help='Batch size for evaluation')
-    parser.add_argument('--num_samples', type=int, default=5,
+    parser.add_argument('--num_samples', type=int, default=100,
                         help='Number of paths to generate per question')
-    parser.add_argument('--max_examples', type=int, default=100,
+    parser.add_argument('--max_examples', type=int, default=100000,
                         help='Maximum number of examples to evaluate')
     parser.add_argument('--device', type=str, default='cuda',
                         choices=['cuda', 'cpu'],
                         help='Device to use')
-    parser.add_argument('--output', type=str, default='evaluation_results.json',
+    parser.add_argument('--output', type=str, default='evaluataion_results.json',
                         help='Output file for results')
     
     args = parser.parse_args()
@@ -403,14 +453,18 @@ def main():
             {
                 'question': q,
                 'answer': a,
+                'answer_entities': ae,
                 'predicted': p,
-                'ground_truth': gt
+                'ground_truth': gt,
+                'ground_truth_full': gtf
             }
-            for q, a, p, gt in zip(
+            for q, a, ae, p, gt, gtf in zip(
                 results['questions'],
                 results['answers'],
+                results['answer_entities'],
                 results['predictions'],
-                results['ground_truth']
+                results['ground_truth'],
+                results['ground_truth_full']
             )
         ]
     }

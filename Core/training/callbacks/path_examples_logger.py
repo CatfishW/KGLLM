@@ -97,15 +97,25 @@ class PathExamplesLogger(Callback):
                     # Get max_path_length from model
                     max_path_length = getattr(pl_module.model, 'max_path_length', 25)
                     
+                    # Use a longer path_length for predictions to ensure they can be longer than ground truth
+                    # Position embeddings are max_path_length * 2, so we can safely use up to that
+                    prediction_path_length = min(max_path_length * 2, 50)  # Cap at 50 to avoid memory issues
+                    
                     # Check if model has generate_multiple method
                     if hasattr(pl_module.model, 'generate_multiple'):
-                        pred_entities, pred_relations = pl_module.model.generate_multiple(
+                        result = pl_module.model.generate_multiple(
                             question_input_ids=question_input_ids_subset,
                             question_attention_mask=question_attention_mask_subset,
                             num_paths=num_paths_to_generate,
-                            path_length=max_path_length,
-                            temperature=1.0
+                            path_length=prediction_path_length,
+                            temperature=1.0,
+                            use_predicted_count=False  # Use fixed count in callback
                         )
+                        # Handle both old (2-tuple) and new (3-tuple) return formats
+                        if len(result) == 3:
+                            pred_entities, pred_relations, _ = result
+                        else:
+                            pred_entities, pred_relations = result
                     else:
                         # Fallback: generate single path multiple times
                         pred_relations_list = []
@@ -113,7 +123,7 @@ class PathExamplesLogger(Callback):
                             _, relations = pl_module.model.generate(
                                 question_input_ids=question_input_ids_subset,
                                 question_attention_mask=question_attention_mask_subset,
-                                path_length=max_path_length,
+                                path_length=prediction_path_length,
                                 temperature=1.0
                             )
                             pred_relations_list.append(relations)
