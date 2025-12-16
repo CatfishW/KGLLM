@@ -48,7 +48,9 @@ def create_model(
             warmup_steps=config.get('warmup_steps', 1000),
             max_steps=config.get('max_steps', 100000),
             use_entity_embeddings=config.get('use_entity_embeddings', True),
-            predict_entities=config.get('predict_entities', True)
+            predict_entities=config.get('predict_entities', True),
+            use_causal_attention=config.get('use_causal_attention', True),
+            predict_hop_count=config.get('predict_hop_count', True)
         )
     
     elif model_type == "autoregressive":

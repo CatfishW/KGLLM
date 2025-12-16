@@ -13,6 +13,25 @@ from typing import Optional, Tuple, Dict
 from einops import rearrange
 
 
+def generate_causal_mask(seq_len: int, device: torch.device = None) -> torch.Tensor:
+    """
+    Generate causal attention mask.
+    
+    Returns a boolean mask where True means "block this attention".
+    Position i can only attend to positions 0..i (inclusive).
+    
+    Args:
+        seq_len: Length of sequence
+        device: Device to create mask on
+        
+    Returns:
+        [seq_len, seq_len] boolean mask (True = blocked)
+    """
+    # Upper triangular matrix (excluding diagonal) = positions that should be blocked
+    mask = torch.triu(torch.ones(seq_len, seq_len, dtype=torch.bool, device=device), diagonal=1)
+    return mask
+
+
 class SinusoidalPositionEmbeddings(nn.Module):
     """Sinusoidal position embeddings for timesteps."""
     
@@ -70,7 +89,8 @@ class PathTransformerBlock(nn.Module):
         self, 
         x: torch.Tensor, 
         time_emb: torch.Tensor,
-        key_padding_mask: Optional[torch.Tensor] = None
+        key_padding_mask: Optional[torch.Tensor] = None,
+        attn_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         # Get modulation parameters from timestep
         shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = \
@@ -81,7 +101,7 @@ class PathTransformerBlock(nn.Module):
         with torch.cuda.amp.autocast(enabled=False):
             x_norm = self.norm1(x.float()).type_as(x)
         x_norm = x_norm * (1 + scale_msa.unsqueeze(1)) + shift_msa.unsqueeze(1)
-        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask)
+        attn_out, _ = self.attn(x_norm, x_norm, x_norm, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
         x = x + gate_msa.unsqueeze(1) * attn_out
         
         # MLP with AdaLN
@@ -156,7 +176,8 @@ class PathDiffusionTransformer(nn.Module):
         question_dim: int = 256,  # Dimension of question encoder output
         max_path_length: int = 20,
         dropout: float = 0.1,
-        predict_entities: bool = True
+        predict_entities: bool = True,
+        use_causal_attention: bool = True  # Enable causal masking for autoregressive-style generation
     ):
         super().__init__()
         
@@ -165,6 +186,7 @@ class PathDiffusionTransformer(nn.Module):
         self.hidden_dim = hidden_dim
         self.max_path_length = max_path_length
         self.predict_entities = predict_entities
+        self.use_causal_attention = use_causal_attention
         
         # Entity and relation embeddings for path tokens
         if predict_entities:
@@ -274,6 +296,11 @@ class PathDiffusionTransformer(nn.Module):
                 # We assume path_mask corresponds to valid entities.
                 # Valid relations are one less.
                 seq_mask = ~path_mask[:, :-1].bool()
+                
+                # Fix for causal attention: ensure first position is always valid
+                # When all positions are masked combined with causal mask, softmax produces NaN
+                # Setting first position to False (not padding) ensures at least self-attention works
+                seq_mask[:, 0] = False
             else:
                 seq_mask = None
         
@@ -289,9 +316,15 @@ class PathDiffusionTransformer(nn.Module):
         # Project context
         question_ctx = self.question_proj(question_encoding)
         
+        # Generate causal attention mask if enabled
+        if self.use_causal_attention:
+            causal_mask = generate_causal_mask(seq_len, device=device)
+        else:
+            causal_mask = None
+        
         # Apply transformer blocks
         for block in self.blocks:
-            x = block['self_attn'](x, time_emb, key_padding_mask=seq_mask)
+            x = block['self_attn'](x, time_emb, key_padding_mask=seq_mask, attn_mask=causal_mask)
             x = block['cross_attn_q'](x, question_ctx, context_mask=question_mask)
         
         x = self.norm_out(x)

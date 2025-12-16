@@ -62,6 +62,52 @@ class QuestionEncoder(nn.Module):
         return sequence_output, pooled_output
 
 
+class HopCountPredictor(nn.Module):
+    """
+    Predicts the number of reasoning hops needed for a question.
+    
+    Output classes:
+        0: 1 hop
+        1: 2 hops
+        2: 3 hops
+        3: 4+ hops
+    """
+    
+    def __init__(self, hidden_dim: int = 256, num_classes: int = 4):
+        super().__init__()
+        self.num_classes = num_classes
+        
+        self.predictor = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(hidden_dim // 2, num_classes)
+        )
+    
+    def forward(self, question_pooled: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            question_pooled: [B, hidden_dim] pooled question representation
+            
+        Returns:
+            logits: [B, num_classes] hop count logits
+        """
+        return self.predictor(question_pooled)
+    
+    def predict_hop_count(self, question_pooled: torch.Tensor) -> torch.Tensor:
+        """
+        Predict the actual hop count (1, 2, 3, or 4).
+        
+        Returns:
+            hop_counts: [B] predicted hop counts (1-indexed)
+        """
+        logits = self.forward(question_pooled)
+        return logits.argmax(dim=-1) + 1  # Convert 0-3 to 1-4
+
+
 class KGPathDiffusionModel(nn.Module):
     """
     Full model for KG Path Generation using Discrete Diffusion.
@@ -84,7 +130,9 @@ class KGPathDiffusionModel(nn.Module):
         max_path_length: int = 20,
         dropout: float = 0.1,
         use_entity_embeddings: bool = True,
-        predict_entities: bool = True
+        predict_entities: bool = True,
+        use_causal_attention: bool = True,
+        predict_hop_count: bool = True
     ):
         super().__init__()
         
@@ -94,6 +142,8 @@ class KGPathDiffusionModel(nn.Module):
         self.max_path_length = max_path_length
         self.predict_entities = predict_entities
         self.use_entity_embeddings = use_entity_embeddings
+        self.use_causal_attention = use_causal_attention
+        self.predict_hop_count_enabled = predict_hop_count
         
         # Question encoder
         self.question_encoder = QuestionEncoder(
@@ -118,8 +168,15 @@ class KGPathDiffusionModel(nn.Module):
             question_dim=hidden_dim,
             max_path_length=max_path_length,
             dropout=dropout,
-            predict_entities=predict_entities
+            predict_entities=predict_entities,
+            use_causal_attention=use_causal_attention
         )
+        
+        # Hop count predictor
+        if predict_hop_count:
+            self.hop_predictor = HopCountPredictor(hidden_dim=hidden_dim)
+        else:
+            self.hop_predictor = None
     
     def encode_inputs(
         self,
@@ -156,13 +213,37 @@ class KGPathDiffusionModel(nn.Module):
             question_input_ids, question_attention_mask
         )
         
-        return self._forward_diffusion_single(
+        # Compute diffusion loss
+        losses = self._forward_diffusion_single(
             question_seq,
             question_attention_mask,
             target_entities,
             target_relations,
             path_mask
         )
+        
+        # Compute hop count loss if enabled
+        if self.hop_predictor is not None:
+            # Compute ground truth hop count from target_relations
+            # Count non-padding, non-mask relations
+            # PAD=0, MASK=2, so valid relations are > 2 (assuming vocab starts with special tokens)
+            valid_rels = (target_relations > 0) & (target_relations != 2)  # Exclude PAD and MASK
+            gt_hop_counts = valid_rels.sum(dim=-1)  # [B]
+            
+            # Convert to class labels (0=1hop, 1=2hop, 2=3hop, 3=4+hop)
+            gt_hop_labels = (gt_hop_counts - 1).clamp(min=0, max=3)  # 1->0, 2->1, 3->2, 4+->3
+            
+            # Compute hop prediction
+            hop_logits = self.hop_predictor(question_pooled)
+            hop_loss = F.cross_entropy(hop_logits, gt_hop_labels)
+            
+            # Add to losses
+            losses['hop_loss'] = hop_loss
+            losses['loss'] = losses['loss'] + 0.5 * hop_loss  # Weight=0.5
+        else:
+            losses['hop_loss'] = torch.tensor(0.0, device=question_seq.device)
+        
+        return losses
 
     def _forward_diffusion_single(
         self,
@@ -254,7 +335,7 @@ class KGPathDiffusionModel(nn.Module):
         valid_path_mask = torch.arange(max_paths, device=device).unsqueeze(0) < num_paths.unsqueeze(1)
         valid_path_mask_flat = valid_path_mask.reshape(B * max_paths)
         
-        return self._forward_diffusion_multipath(
+        losses = self._forward_diffusion_multipath(
             question_seq_expanded,
             flat_entities,
             flat_relations,
@@ -266,6 +347,29 @@ class KGPathDiffusionModel(nn.Module):
             max_paths,
             num_paths
         )
+        
+        # Compute hop count loss if enabled
+        if self.hop_predictor is not None:
+            # Use the first path's relation count as ground truth hop count
+            # Take the first valid path for each sample
+            first_path_relations = all_target_relations[:, 0, :]  # [B, rel_len]
+            valid_rels = (first_path_relations > 0) & (first_path_relations != 2)
+            gt_hop_counts = valid_rels.sum(dim=-1)  # [B]
+            
+            # Convert to class labels
+            gt_hop_labels = (gt_hop_counts - 1).clamp(min=0, max=3)
+            
+            # Compute hop prediction
+            hop_logits = self.hop_predictor(question_pooled)
+            hop_loss = F.cross_entropy(hop_logits, gt_hop_labels)
+            
+            # Add to losses
+            losses['hop_loss'] = hop_loss
+            losses['loss'] = losses['loss'] + 0.5 * hop_loss
+        else:
+            losses['hop_loss'] = torch.tensor(0.0, device=device)
+        
+        return losses
 
     def _forward_diffusion_multipath(
         self,
@@ -447,11 +551,20 @@ class KGPathDiffusionModel(nn.Module):
         self,
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
-        path_length: int = 10,
-        temperature: float = 1.0
+        path_length: Optional[int] = None,
+        temperature: float = 1.0,
+        use_predicted_hops: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         Generate a single reasoning path.
+        
+        Args:
+            question_input_ids: [B, seq_len]
+            question_attention_mask: [B, seq_len]
+            path_length: If specified, generate this many entities. If None and use_predicted_hops=True,
+                         use hop count predictor to determine path length.
+            temperature: Sampling temperature
+            use_predicted_hops: If True and path_length is None, use hop predictor
         
         Returns:
             entities: [B, path_length]
@@ -463,6 +576,18 @@ class KGPathDiffusionModel(nn.Module):
         )
         
         question_mask = ~question_attention_mask.bool()
+        
+        # Determine path length
+        if path_length is None and use_predicted_hops and self.hop_predictor is not None:
+            # Use predicted hop count as path length
+            predicted_hops = self.hop_predictor.predict_hop_count(question_pooled)  # [B]
+            # Use the max predicted hop count in the batch + 1 for entity count
+            # (n hops = n+1 entities)
+            path_length = predicted_hops.max().item() + 1
+            # Clamp to reasonable range
+            path_length = max(2, min(path_length, self.max_path_length))
+        elif path_length is None:
+            path_length = 10  # Default fallback
         
         entities, relations = self.diffusion.sample(
             self.denoiser,
@@ -584,7 +709,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         max_steps: int = 100000,
         use_multipath_training: bool = True,
         use_entity_embeddings: bool = True,
-        predict_entities: bool = True
+        predict_entities: bool = True,
+        use_causal_attention: bool = True,
+        predict_hop_count: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -601,7 +728,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
             max_path_length=max_path_length,
             dropout=dropout,
             use_entity_embeddings=use_entity_embeddings,
-            predict_entities=predict_entities
+            predict_entities=predict_entities,
+            use_causal_attention=use_causal_attention,
+            predict_hop_count=predict_hop_count
         )
         
         self.learning_rate = learning_rate
@@ -731,6 +860,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.log('train/entity_loss', outputs['entity_loss'], sync_dist=True)
         self.log('train/relation_loss', outputs['relation_loss'], sync_dist=True)
         
+        if 'hop_loss' in outputs:
+            self.log('train/hop_loss', outputs['hop_loss'], sync_dist=True)
+        
         if 'num_paths_avg' in outputs:
             self.log('train/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
@@ -743,6 +875,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.log('val/entity_loss', outputs['entity_loss'], sync_dist=True)
         self.log('val/relation_loss', outputs['relation_loss'], sync_dist=True)
         
+        if 'hop_loss' in outputs:
+            self.log('val/hop_loss', outputs['hop_loss'], sync_dist=True)
+        
         if 'num_paths_avg' in outputs:
             self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
@@ -754,6 +889,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.log('test/loss', outputs['loss'], sync_dist=True)
         self.log('test/entity_loss', outputs['entity_loss'], sync_dist=True)
         self.log('test/relation_loss', outputs['relation_loss'], sync_dist=True)
+        
+        if 'hop_loss' in outputs:
+            self.log('test/hop_loss', outputs['hop_loss'], sync_dist=True)
         
         if 'num_paths_avg' in outputs:
             self.log('test/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)

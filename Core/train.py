@@ -76,6 +76,8 @@ DEFAULTS = {
     'debug': False,
     'use_entity_embeddings': True,
     'predict_entities': True,
+    'use_causal_attention': True,
+    'predict_hop_count': True,
     # Data augmentation defaults
     'augment_questions': False,
     'question_word_dropout': 0.0,
@@ -215,6 +217,12 @@ def parse_args():
                         help='Whether to use learnable entity embeddings')
     parser.add_argument('--predict_entities', type=lambda x: (str(x).lower() == 'true'), default=True,
                         help='Whether to predict entities in the path generation')
+    parser.add_argument('--use_causal_attention', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Enable causal attention mask for autoregressive-style generation')
+    parser.add_argument('--predict_hop_count', type=lambda x: (str(x).lower() == 'true'), default=True,
+                        help='Enable hop-count prediction for dynamic path length')
+    parser.add_argument('--hop_count_loss_weight', type=float, default=0.5,
+                        help='Weight for hop count prediction loss')
     
     # Training arguments
     parser.add_argument('--batch_size', type=int, default=32,
@@ -450,6 +458,8 @@ def main():
         'max_steps': args.max_steps,
         'use_entity_embeddings': args.use_entity_embeddings,
         'predict_entities': args.predict_entities,
+        'use_causal_attention': getattr(args, 'use_causal_attention', True),
+        'predict_hop_count': getattr(args, 'predict_hop_count', True),
         'augment_paths': args.augment_paths,
         # Autoregressive parameters
         'decoding_strategy': args.decoding_strategy,

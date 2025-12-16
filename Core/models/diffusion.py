@@ -95,7 +95,9 @@ class KGPathDiffusionModel(nn.Module):
         max_path_length: int = 20,
         dropout: float = 0.1,
         use_entity_embeddings: bool = True,
-        predict_entities: bool = True
+        predict_entities: bool = True,
+        use_causal_attention: bool = True,
+        predict_hop_count: bool = True
     ):
         super().__init__()
         
@@ -105,6 +107,8 @@ class KGPathDiffusionModel(nn.Module):
         self.max_path_length = max_path_length
         self.predict_entities = predict_entities
         self.use_entity_embeddings = use_entity_embeddings
+        self.use_causal_attention = use_causal_attention
+        self.predict_hop_count_enabled = predict_hop_count
         
         # Path count predictor (predicts how many paths to generate)
         self.path_count_predictor = PathCountPredictor(
@@ -136,7 +140,8 @@ class KGPathDiffusionModel(nn.Module):
             question_dim=hidden_dim,
             max_path_length=max_path_length,
             dropout=dropout,
-            predict_entities=predict_entities
+            predict_entities=predict_entities,
+            use_causal_attention=use_causal_attention
         )
     
     def encode_inputs(
@@ -418,25 +423,26 @@ class KGPathDiffusionModel(nn.Module):
         """Compute loss for each path individually."""
         B_flat = relation_logits.shape[0]
         device = relation_logits.device
-        losses = torch.zeros(B_flat, device=device, dtype=relation_logits.dtype)
-
+        
+        # Use list to accumulate losses (preserves gradient flow)
+        loss_list = []
+        
         # If there are no valid paths at all in this batch, create a dummy loss that
         # is connected to the computation graph so that .backward() still works.
         if not valid_mask.any():
             dummy = relation_logits.sum() * 0.0
-            losses = losses + dummy
-            return losses
+            return dummy.expand(B_flat)
         
         for i in range(B_flat):
             if not valid_mask[i]:
+                # Invalid path - use zero loss connected to graph
+                loss_list.append(relation_logits[i].sum() * 0.0)
                 continue
             
             # Relation loss
             r_mask = relation_mask[i]
             if r_mask.sum() == 0:
-                # No valid relations in this path (e.g., path is too short)
-                # Ensure gradient flow even if loss is 0, but avoid NaN propagation
-                r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                r_loss = relation_logits[i].sum() * 0.0  # Connected to graph
             else:
                 r_logits = relation_logits[i][r_mask]
                 r_targets = target_relations[i][r_mask]
@@ -444,49 +450,44 @@ class KGPathDiffusionModel(nn.Module):
                 # Check for invalid targets (out of bounds or padding)
                 valid_targets = (r_targets >= 0) & (r_targets < relation_logits.shape[-1]) & (r_targets != 0)
                 if not valid_targets.any():
-                    # All targets are invalid/padding, skip this path
-                    r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    r_loss = r_logits.sum() * 0.0  # Connected to graph
                 elif r_logits.numel() > 0 and valid_targets.sum() > 0:
-                        # Only compute loss on valid targets
-                        valid_r_logits = r_logits[valid_targets]
-                        valid_r_targets = r_targets[valid_targets]
-                        r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
-                        # Check for NaN
-                        if torch.isnan(r_loss):
-                            r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    valid_r_logits = r_logits[valid_targets]
+                    valid_r_targets = r_targets[valid_targets]
+                    r_loss = F.cross_entropy(valid_r_logits, valid_r_targets, reduction='mean')
+                    # Replace NaN with connected zero
+                    if torch.isnan(r_loss):
+                        r_loss = r_logits.sum() * 0.0
                 else:
-                    r_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    r_loss = r_logits.sum() * 0.0
             
             # Entity loss
             if entity_logits is not None:
                 e_mask = path_mask[i]
                 if e_mask.sum() == 0:
-                    e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                    e_loss = entity_logits[i].sum() * 0.0
                 else:
                     e_logits = entity_logits[i][e_mask]
                     e_targets = target_entities[i][e_mask]
                     
-                    # Check for invalid targets (out of bounds or padding)
                     valid_targets = (e_targets >= 0) & (e_targets < entity_logits.shape[-1]) & (e_targets != 0)
                     if not valid_targets.any():
-                        # All targets are invalid/padding, skip this path
-                        e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                        e_loss = e_logits.sum() * 0.0
                     elif e_logits.numel() > 0 and valid_targets.sum() > 0:
-                        # Only compute loss on valid targets
                         valid_e_logits = e_logits[valid_targets]
                         valid_e_targets = e_targets[valid_targets]
                         e_loss = F.cross_entropy(valid_e_logits, valid_e_targets, reduction='mean')
-                        # Check for NaN
                         if torch.isnan(e_loss):
-                            e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                            e_loss = e_logits.sum() * 0.0
                     else:
-                        e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                        e_loss = e_logits.sum() * 0.0
             else:
-                e_loss = torch.tensor(0.0, device=device, requires_grad=True)
+                e_loss = relation_logits[i].sum() * 0.0  # Connected to graph
             
-            losses[i] = e_loss + r_loss
-            
-        return losses
+            loss_list.append(e_loss + r_loss)
+        
+        # Stack losses - this preserves gradients
+        return torch.stack(loss_list)
 
     @torch.no_grad()
     def generate(
@@ -642,7 +643,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
         max_steps: int = 100000,
         use_multipath_training: bool = True,
         use_entity_embeddings: bool = True,
-        predict_entities: bool = True
+        predict_entities: bool = True,
+        use_causal_attention: bool = True,
+        predict_hop_count: bool = True
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -659,7 +662,9 @@ class KGPathDiffusionLightning(pl.LightningModule):
             max_path_length=max_path_length,
             dropout=dropout,
             use_entity_embeddings=use_entity_embeddings,
-            predict_entities=predict_entities
+            predict_entities=predict_entities,
+            use_causal_attention=use_causal_attention,
+            predict_hop_count=predict_hop_count
         )
         
         self.learning_rate = learning_rate
