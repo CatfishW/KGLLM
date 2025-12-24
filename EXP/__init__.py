@@ -9,6 +9,7 @@ Modules:
 - question_classifier: Classify questions by complexity type
 - subgraph_filter: Filter paths by question type
 - diffusion_ranker: Rerank paths using diffusion model
+- rag_guided_generator: RAG-guided diffusion generation
 """
 
 from .config import RAGConfig
@@ -17,6 +18,7 @@ from .pipeline import KGRAGPipeline, EnhancedKGRAGPipeline, create_enhanced_pipe
 from .question_classifier import QuestionClassifier, QuestionType
 from .subgraph_filter import SubgraphFilter
 from .diffusion_ranker import DiffusionRanker
+from .rag_guided_generator import RAGGuidedDiffusionGenerator, GeneratedPath, GenerationResult
 
 __all__ = [
     # Config
@@ -33,7 +35,11 @@ __all__ = [
     "QuestionType",
     "SubgraphFilter",
     "DiffusionRanker",
+    # RAG-guided generation
+    "RAGGuidedDiffusionGenerator",
+    "GeneratedPath",
+    "GenerationResult",
 ]
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 

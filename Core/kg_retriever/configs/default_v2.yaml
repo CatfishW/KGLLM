@@ -1,0 +1,71 @@
+# ============================================================
+# KG Diffusion Retriever Training Config - OPTIMIZED v2
+# ============================================================
+# Improvements:
+# - Increased hidden_dim to 384 for more capacity
+# - Reduced dropout for better convergence
+# - Label smoothing for regularization
+# - Cosine annealing with restarts
+# ============================================================
+
+train_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/train.parquet
+val_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/val.parquet
+test_data:
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json
+
+# ============================================================
+# Model Architecture - OPTIMIZED
+# ============================================================
+model_type: kg_diffusion_retriever
+hidden_dim: 384          # Increased from 256
+kg_feature_dim: 384      # Match hidden_dim
+num_layers: 6            # Increased from 4
+num_heads: 8
+num_diffusion_steps: 30  # More steps for better quality
+max_path_length: 8
+dropout: 0.05            # Reduced from 0.1 (model was underfitting)
+num_entity_buckets: 50000
+
+# KG Processing - USE FULL KG
+max_triples: 0
+
+# Question Encoder
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 64
+
+# ============================================================
+# Training Setup - OPTIMIZED
+# ============================================================
+batch_size: 8            # Increased (use more GPU memory)
+num_workers: 4
+learning_rate: 0.0003    # Slightly higher
+weight_decay: 0.005      # Reduced weight decay
+warmup_steps: 1000       # Faster warmup
+max_steps: 150000        # More training
+max_epochs: 300
+gradient_clip: 1.0
+accumulate_grad_batches: 4  # Effective batch = 32
+early_stopping_patience: 30
+check_val_every_n_epoch: 5
+label_smoothing: 0.1     # Add regularization
+
+# ============================================================
+# Hardware / Logging
+# ============================================================
+gpus: [0]
+precision: 16-mixed
+strategy: auto
+output_dir: /data/Yanlai/KGLLM/Core/kg_retriever/outputs_v2
+experiment_name: kg_diffusion_v2
+log_path_examples: true
+wandb: false
+seed: 42
+debug: false

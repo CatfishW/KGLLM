@@ -1,0 +1,93 @@
+# ============================================================
+# Diffusion Model Training Config (Optimized for Training from Scratch)
+# ============================================================
+
+train_data: 
+  - ../Data/webqsp_final/shortest_paths/train.parquet
+  - ../Data/CWQ/shortest_paths/train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/webqsp_rephrased_train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part1.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part2.parquet
+val_data: 
+  - ../Data/webqsp_final/shortest_paths/val.parquet
+  - ../Data/CWQ/shortest_paths/val.parquet
+test_data: 
+  - ../Data/webqsp_final/shortest_paths/test.parquet
+  - ../Data/CWQ/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json
+
+# ============================================================
+# Model Architecture
+# ============================================================
+hidden_dim: 256
+dropout: 0.15                  # Slightly higher for better regularization
+num_diffusion_layers: 4        # More layers for better representation (was 2)
+num_heads: 8
+num_diffusion_steps: 50        # More steps for better denoising quality (was 10)
+
+# Relation-only generation (faster, focused on path structure)
+use_entity_embeddings: false
+predict_entities: false
+
+# Causal masking and hop-count prediction
+use_causal_attention: true
+predict_hop_count: true
+hop_count_loss_weight: 0.3     # Lower weight so diffusion loss dominates (was 0.5)
+
+# ============================================================
+# Text Handling
+# ============================================================
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true  # Freeze for stability in early training
+max_question_length: 128       # Reduced from 200 for efficiency
+max_path_length: 8             # Most paths are 1-4 hops (was 10)
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# ============================================================
+# Data Augmentation (Important for generalization)
+# ============================================================
+augment_questions: true
+question_word_dropout: 0.05    # Slight increase from 0.01 for robustness
+question_word_swap_prob: 0.02
+question_random_delete_prob: 0.02
+
+augment_paths: true
+path_random_single_path: true
+path_max_paths: 15
+path_dropout_prob: 0.15        # Slight increase for diversity
+
+# ============================================================
+# Training Setup (Optimized for convergence)
+# ============================================================
+batch_size: 32                 # Larger batch for stable gradients (was 16)
+num_workers: 4
+learning_rate: 0.0003          # Higher LR with warmup (was 0.0001)
+weight_decay: 0.05             # Stronger regularization (was 0.01)
+warmup_steps: 2000             # More warmup for stability (was 1000)
+max_steps: 200000              # Reasonable limit
+max_epochs: 1000                # Reasonable limit (was 1000)
+gradient_clip: 1.0
+accumulate_grad_batches: 2     # Effective batch size = 64 (was 1)
+early_stopping_patience: -1    # Enable early stopping
+check_val_every_n_epoch: 5     # More frequent validation (was 10)
+val_check_interval: 1.0
+
+# ============================================================
+# Hardware / Logging
+# ============================================================
+gpus: 2
+precision: 16-mixed
+strategy: ddp_find_unused_parameters_true
+output_dir: diffusion_causal_hopcount_20251216_fix
+experiment_name: diffusion_causal_hopcount_20251216_fix
+log_path_examples: true
+wandb: false
+wandb_project: kg-path-diffusion
+seed: 42
+resume: null
+debug: false
+

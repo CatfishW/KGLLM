@@ -1,0 +1,19 @@
+# KGQA RAG System Requirements
+# Fast and accurate retrieval using hybrid search + Qwen3 reranking
+
+# Core dependencies
+torch>=2.0.0
+transformers>=4.51.0
+sentence-transformers>=2.2.0
+faiss-cpu>=1.7.4  # Use faiss-gpu for GPU acceleration
+rank-bm25>=0.2.2
+pandas>=2.0.0
+pyarrow>=14.0.0
+numpy>=1.24.0
+tqdm>=4.65.0
+
+# Optional: GPU FAISS (comment out faiss-cpu above if using)
+# faiss-gpu>=1.7.4
+
+# Optional: Flash Attention (for faster reranking)
+# flash-attn>=2.0.0

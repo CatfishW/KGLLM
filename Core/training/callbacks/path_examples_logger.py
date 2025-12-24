@@ -95,11 +95,7 @@ class PathExamplesLogger(Callback):
                 try:
                     num_paths_to_generate = 3
                     # Get max_path_length from model
-                    max_path_length = getattr(pl_module.model, 'max_path_length', 25)
-                    
-                    # Use a longer path_length for predictions to ensure they can be longer than ground truth
-                    # Position embeddings are max_path_length * 2, so we can safely use up to that
-                    prediction_path_length = min(max_path_length * 2, 50)  # Cap at 50 to avoid memory issues
+                    max_path_length = getattr(pl_module.model, 'max_path_length', 10)
                     
                     # Check if model has generate_multiple method
                     if hasattr(pl_module.model, 'generate_multiple'):
@@ -107,9 +103,10 @@ class PathExamplesLogger(Callback):
                             question_input_ids=question_input_ids_subset,
                             question_attention_mask=question_attention_mask_subset,
                             num_paths=num_paths_to_generate,
-                            path_length=prediction_path_length,
+                            path_length=None,  # Use predicted hop count
                             temperature=1.0,
-                            use_predicted_count=False  # Use fixed count in callback
+                            use_predicted_count=False,  # Use fixed count in callback
+                            use_predicted_hop_count=True  # Use hop predictor for path length
                         )
                         # Handle both old (2-tuple) and new (3-tuple) return formats
                         if len(result) == 3:

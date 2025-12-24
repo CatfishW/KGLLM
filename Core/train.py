@@ -460,6 +460,7 @@ def main():
         'predict_entities': args.predict_entities,
         'use_causal_attention': getattr(args, 'use_causal_attention', True),
         'predict_hop_count': getattr(args, 'predict_hop_count', True),
+        'hop_count_loss_weight': getattr(args, 'hop_count_loss_weight', 0.5),
         'augment_paths': args.augment_paths,
         # Autoregressive parameters
         'decoding_strategy': args.decoding_strategy,
@@ -608,6 +609,8 @@ def main():
     # Test if test data is provided
     if args.test_data:
         print("\nRunning test evaluation...")
+        # Ensure test dataset is loaded (may not have been loaded during 'fit' setup)
+        data_module.setup('test')
         trainer.test(model, datamodule=data_module)
     
     print("\nTraining complete!")

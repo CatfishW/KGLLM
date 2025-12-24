@@ -1,0 +1,64 @@
+train_data: 
+  - ../Data/webqsp_final/shortest_paths/train.parquet
+val_data: 
+  - ../Data/webqsp_final/shortest_paths/val.parquet
+test_data: 
+  - ../Data/webqsp_final/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json
+
+# Model architecture
+hidden_dim: 256
+dropout: 0.1
+num_diffusion_layers: 2
+num_heads: 8
+num_diffusion_steps: 10
+
+# Optimization: Relation-only generation with frozen entity embeddings
+use_entity_embeddings: false
+predict_entities: false
+
+# NEW: Causal masking and hop-count prediction
+use_causal_attention: true    # Enable causal attention for autoregressive-style generation
+predict_hop_count: true       # Enable hop-count prediction (1/2/3/4+ hops)
+hop_count_loss_weight: 0.5    # Weight for hop prediction loss (added to total loss)
+
+# Text handling
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 200
+max_path_length: 10
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# Data augmentation - disabled for quick test
+augment_questions: false
+augment_paths: false
+
+# Training setup - quick test
+batch_size: 8
+num_workers: 2
+learning_rate: 0.0001
+weight_decay: 0.01
+warmup_steps: 10
+max_steps: 100
+max_epochs: 2
+gradient_clip: 1.0
+accumulate_grad_batches: 1
+early_stopping_patience: -1
+check_val_every_n_epoch: 1
+val_check_interval: 1.0
+
+# Hardware / logging
+gpus: 1
+precision: 16-mixed
+strategy: auto
+output_dir: test_training_verification
+experiment_name: test_training_verification
+log_path_examples: true
+wandb: false
+seed: 42
+resume: null
+debug: false

@@ -50,7 +50,8 @@ def create_model(
             use_entity_embeddings=config.get('use_entity_embeddings', True),
             predict_entities=config.get('predict_entities', True),
             use_causal_attention=config.get('use_causal_attention', True),
-            predict_hop_count=config.get('predict_hop_count', True)
+            predict_hop_count=config.get('predict_hop_count', True),
+            hop_count_loss_weight=config.get('hop_count_loss_weight', 0.5)
         )
     
     elif model_type == "autoregressive":

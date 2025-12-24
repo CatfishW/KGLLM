@@ -1,0 +1,64 @@
+# ============================================================
+# GNN Retriever Training Config - Ablation Study
+# ============================================================
+# GNN-based path retriever for comparison with diffusion model
+# Uses message passing over KG + autoregressive path decoding
+# ============================================================
+
+train_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/train.parquet
+val_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/val.parquet
+test_data:
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/test.parquet
+vocab_path: null
+
+# ============================================================
+# Model Architecture
+# ============================================================
+model_type: gnn_retriever
+hidden_dim: 256
+num_gnn_layers: 3
+num_heads: 8
+max_path_length: 8
+dropout: 0.1
+num_entity_buckets: 50000
+
+# KG Processing - USE FULL KG
+max_triples: 0
+
+# Question Encoder
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 64
+
+# ============================================================
+# Training Setup
+# ============================================================
+batch_size: 4
+num_workers: 4
+learning_rate: 0.0002
+weight_decay: 0.01
+warmup_steps: 2000
+max_steps: 100000
+max_epochs: 200
+gradient_clip: 1.0
+accumulate_grad_batches: 8
+early_stopping_patience: 20
+check_val_every_n_epoch: 5
+
+# ============================================================
+# Hardware / Logging
+# ============================================================
+gpus: [1]  # Use GPU 1 only (Diffusion uses GPU 0)
+precision: 16-mixed
+strategy: auto
+output_dir: /data/Yanlai/KGLLM/Core/kg_retriever/experiments/gnn_retriever
+experiment_name: gnn_retriever
+wandb: false
+seed: 42
+debug: false

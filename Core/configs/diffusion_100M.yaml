@@ -1,0 +1,96 @@
+# ============================================================
+# Diffusion Model Training Config - 100M Parameters
+# ============================================================
+# Optimized for:
+# - Larger model capacity (~100M params) for better accuracy
+# - Fast inference (fewer diffusion steps)
+# ============================================================
+
+train_data: 
+  - ../Data/webqsp_final/shortest_paths/train.parquet
+  - ../Data/CWQ/shortest_paths/train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/webqsp_rephrased_train.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part1.parquet
+  - ../Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part2.parquet
+val_data: 
+  - ../Data/webqsp_final/shortest_paths/val.parquet
+  - ../Data/CWQ/shortest_paths/val.parquet
+test_data: 
+  - ../Data/webqsp_final/shortest_paths/test.parquet
+  - ../Data/CWQ/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json
+
+# ============================================================
+# Model Architecture (~100M parameters)
+# ============================================================
+hidden_dim: 512                # 2x larger (was 256)
+dropout: 0.15                  
+num_diffusion_layers: 6        # More layers (was 4)
+num_heads: 16                  # More heads (was 8)
+num_diffusion_steps: 30        # Fewer steps for faster inference (was 50)
+
+# Relation-only generation (faster, focused on path structure)
+use_entity_embeddings: false
+predict_entities: false
+
+# Causal masking and hop-count prediction
+use_causal_attention: true
+predict_hop_count: true
+hop_count_loss_weight: 0.3
+
+# ============================================================
+# Text Handling
+# ============================================================
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 128
+max_path_length: 8
+
+max_vocab_size: 2000000000
+max_entities: 20000000000
+max_relations: 50000
+
+# ============================================================
+# Data Augmentation
+# ============================================================
+augment_questions: true
+question_word_dropout: 0.05
+question_word_swap_prob: 0.02
+question_random_delete_prob: 0.02
+
+augment_paths: true
+path_random_single_path: true
+path_max_paths: 15
+path_dropout_prob: 0.15
+
+# ============================================================
+# Training Setup
+# ============================================================
+batch_size: 16                 # Smaller batch for larger model (was 32)
+num_workers: 4
+learning_rate: 0.0002          # Slightly lower for larger model
+weight_decay: 0.05
+warmup_steps: 3000             # More warmup for larger model
+max_steps: 200000
+max_epochs: 1000
+gradient_clip: 1.0
+accumulate_grad_batches: 4     # Effective batch size = 64
+early_stopping_patience: -1
+check_val_every_n_epoch: 5
+val_check_interval: 1.0
+
+# ============================================================
+# Hardware / Logging
+# ============================================================
+gpus: 2
+precision: 16-mixed
+strategy: ddp_find_unused_parameters_true
+output_dir: diffusion_100M
+experiment_name: diffusion_100M
+log_path_examples: true
+wandb: false
+wandb_project: kg-path-diffusion
+seed: 42
+resume: null
+debug: false

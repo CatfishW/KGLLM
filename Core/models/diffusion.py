@@ -19,24 +19,22 @@ from modules.diffusion import PathDiffusionTransformer, DiscreteDiffusion
 from .base import QuestionEncoder
 
 
-class PathCountPredictor(nn.Module):
+
+class HopCountPredictor(nn.Module):
     """
-    Predicts the number of reasoning paths for a given question.
+    Predicts the number of reasoning hops needed for a question.
     
-    This allows the model to generate a dynamic number of paths based on
-    the complexity of the question, matching the ground truth distribution.
+    Output classes:
+        0: 1 hop
+        1: 2 hops
+        2: 3 hops
+        3: 4+ hops
     """
     
-    def __init__(
-        self,
-        hidden_dim: int = 256,
-        max_paths: int = 30,
-        dropout: float = 0.1
-    ):
+    def __init__(self, hidden_dim: int = 256, num_classes: int = 4, dropout: float = 0.1):
         super().__init__()
-        self.max_paths = max_paths
+        self.num_classes = num_classes
         
-        # MLP to predict path count from question representation
         self.predictor = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
@@ -44,33 +42,28 @@ class PathCountPredictor(nn.Module):
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, max_paths)  # Output logits for 1 to max_paths
+            nn.Linear(hidden_dim // 2, num_classes)
         )
     
     def forward(self, question_pooled: torch.Tensor) -> torch.Tensor:
         """
-        Predict path count distribution.
-        
         Args:
             question_pooled: [B, hidden_dim] pooled question representation
-        
+            
         Returns:
-            logits: [B, max_paths] logits for each path count (1 to max_paths)
+            logits: [B, num_classes] hop count logits
         """
         return self.predictor(question_pooled)
     
-    def predict_count(self, question_pooled: torch.Tensor) -> torch.Tensor:
+    def predict_hop_count(self, question_pooled: torch.Tensor) -> torch.Tensor:
         """
-        Get predicted path count (argmax + 1, since index 0 = 1 path).
-        
-        Args:
-            question_pooled: [B, hidden_dim]
+        Predict the actual hop count (1, 2, 3, or 4).
         
         Returns:
-            counts: [B] predicted number of paths (1 to max_paths)
+            hop_counts: [B] predicted hop counts (1-indexed)
         """
         logits = self.forward(question_pooled)
-        return logits.argmax(dim=-1) + 1  # +1 because index 0 = 1 path
+        return logits.argmax(dim=-1) + 1  # Convert 0-3 to 1-4
 
 
 class KGPathDiffusionModel(nn.Module):
@@ -110,13 +103,6 @@ class KGPathDiffusionModel(nn.Module):
         self.use_causal_attention = use_causal_attention
         self.predict_hop_count_enabled = predict_hop_count
         
-        # Path count predictor (predicts how many paths to generate)
-        self.path_count_predictor = PathCountPredictor(
-            hidden_dim=hidden_dim,
-            max_paths=30,  # Maximum 30 paths
-            dropout=dropout
-        )
-        
         # Question encoder
         self.question_encoder = QuestionEncoder(
             model_name=question_encoder_name,
@@ -143,6 +129,16 @@ class KGPathDiffusionModel(nn.Module):
             predict_entities=predict_entities,
             use_causal_attention=use_causal_attention
         )
+        
+        # Hop count predictor (predicts how many hops/relations in path)
+        if predict_hop_count:
+            self.hop_predictor = HopCountPredictor(
+                hidden_dim=hidden_dim,
+                num_classes=4,  # 1, 2, 3, 4+ hops
+                dropout=dropout
+            )
+        else:
+            self.hop_predictor = None
     
     def encode_inputs(
         self,
@@ -226,13 +222,13 @@ class KGPathDiffusionModel(nn.Module):
         all_target_relations: torch.Tensor,
         all_path_lengths: torch.Tensor,
         num_paths: torch.Tensor,
-        path_count_loss_weight: float = 0.1
+        hop_count_loss_weight: float = 0.5
     ) -> Dict[str, torch.Tensor]:
         """
         Multi-path training forward pass.
         
         Args:
-            path_count_loss_weight: Weight for path count prediction loss
+            hop_count_loss_weight: Weight for hop count prediction loss
         """
         B = question_input_ids.shape[0]
         max_paths = all_target_entities.shape[1]
@@ -245,12 +241,29 @@ class KGPathDiffusionModel(nn.Module):
             question_input_ids, question_attention_mask
         )
         
-        # Predict path count and compute loss
-        path_count_logits = self.path_count_predictor(question_pooled)
-        # Target: num_paths - 1 (since index 0 = 1 path)
-        # Clamp to valid range [0, max_paths-1]
-        path_count_targets = (num_paths - 1).clamp(0, self.path_count_predictor.max_paths - 1)
-        path_count_loss = F.cross_entropy(path_count_logits, path_count_targets)
+        # Compute hop count loss if predictor is enabled
+        hop_loss = torch.tensor(0.0, device=device)
+        hop_accuracy = torch.tensor(0.0, device=device)
+        if self.hop_predictor is not None:
+            # Get ground truth hop count from first valid path's relation count
+            # Path length includes BOS/EOS, so actual hops = path_length - 3
+            # For a path [BOS, e1, e2, EOS], length=4, we have 1 relation (1 hop)
+            first_path_lengths = all_path_lengths[:, 0]  # [B] - first path for each sample
+            # Number of hops = number of relations = path_length - 3 (BOS, last entity, EOS)
+            gt_hops = (first_path_lengths - 3).clamp(min=1)  # [B], at least 1 hop
+            
+            # Convert to class labels: 1hop→0, 2hops→1, 3hops→2, 4+hops→3
+            # This aligns with predict_hop_count() which returns argmax + 1
+            gt_hop_labels = (gt_hops - 1).clamp(min=0, max=3).long()  # [B]
+            
+            # Predict hop count
+            hop_logits = self.hop_predictor(question_pooled)  # [B, 4]
+            hop_loss = F.cross_entropy(hop_logits, gt_hop_labels)
+            
+            # Compute accuracy for logging
+            with torch.no_grad():
+                predicted_hops = hop_logits.argmax(dim=-1)
+                hop_accuracy = (predicted_hops == gt_hop_labels).float().mean()
         
         # Expand encoded inputs for all paths
         # [B, ...] -> [B * max_paths, ...]
@@ -301,24 +314,19 @@ class KGPathDiffusionModel(nn.Module):
             num_paths
         )
         
-        # Combine diffusion loss with path count loss
-        total_loss = diffusion_losses['loss'] + path_count_loss_weight * path_count_loss
-        
-        # Compute predicted path count for logging
-        with torch.no_grad():
-            predicted_counts = path_count_logits.argmax(dim=-1) + 1
-            count_accuracy = (predicted_counts == num_paths).float().mean()
+        # Combine losses
+        total_loss = diffusion_losses['loss'] + hop_count_loss_weight * hop_loss
         
         return {
             'loss': total_loss,
             'diffusion_loss': diffusion_losses['loss'],
-            'path_count_loss': path_count_loss,
             'entity_loss': diffusion_losses['entity_loss'],
             'relation_loss': diffusion_losses['relation_loss'],
-            'num_paths_avg': num_paths.float().mean(),
-            'predicted_paths_avg': predicted_counts.float().mean(),
-            'path_count_accuracy': count_accuracy
+            'hop_loss': hop_loss,
+            'hop_accuracy': hop_accuracy,
+            'num_paths_avg': num_paths.float().mean()
         }
+
 
     def _forward_diffusion_multipath(
         self,
@@ -527,10 +535,11 @@ class KGPathDiffusionModel(nn.Module):
         question_input_ids: torch.Tensor,
         question_attention_mask: torch.Tensor,
         num_paths: Optional[int] = None,
-        path_length: int = 10,
+        path_length: Optional[int] = None,
         temperature: float = 1.0,
         diversity_penalty: float = 0.5,
-        use_predicted_count: bool = True
+        use_predicted_count: bool = True,
+        use_predicted_hop_count: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         Generate multiple diverse reasoning paths.
@@ -542,10 +551,11 @@ class KGPathDiffusionModel(nn.Module):
             question_input_ids: [B, seq_len]
             question_attention_mask: [B, seq_len]
             num_paths: Number of paths to generate per sample (if None, uses predicted count)
-            path_length: Maximum length of each generated path
+            path_length: Maximum length of each generated path (if None and use_predicted_hop_count, uses predicted hop count)
             temperature: Sampling temperature (higher = more diverse)
             diversity_penalty: Penalty for repeating entities/relations
             use_predicted_count: If True and num_paths is None, predict num_paths from question
+            use_predicted_hop_count: If True and path_length is None, predict path_length from question
         
         Returns:
             all_entities: [B, max_num_paths, path_length]
@@ -561,17 +571,32 @@ class KGPathDiffusionModel(nn.Module):
         )
         
         # Determine number of paths to generate
-        if num_paths is None and use_predicted_count:
-            # Predict path count from question
-            predicted_counts = self.path_count_predictor.predict_count(question_pooled)
-            max_num_paths = predicted_counts.max().item()
-        elif num_paths is not None:
+        if num_paths is not None:
             predicted_counts = torch.full((B,), num_paths, dtype=torch.long, device=device)
             max_num_paths = num_paths
         else:
             # Default to 5 paths
             predicted_counts = torch.full((B,), 5, dtype=torch.long, device=device)
             max_num_paths = 5
+        
+        # Determine path length based on hop prediction
+        if path_length is None and use_predicted_hop_count and self.hop_predictor is not None:
+            # Predict hop count from question (1, 2, 3, or 4)
+            predicted_hops = self.hop_predictor.predict_hop_count(question_pooled)  # [B]
+            # Hop count = number of relations in the path
+            # path_length passed to sample() becomes entity count, relations = path_length - 1
+            # Use max across batch for generation, then truncate per-sample
+            max_hops = predicted_hops.max().item()
+            effective_path_length = min(max_hops + 1, self.max_path_length)
+            per_sample_hops = predicted_hops  # Save for truncation
+        elif path_length is not None:
+            effective_path_length = path_length
+            per_sample_hops = None
+        else:
+            # Default to max_path_length
+            effective_path_length = self.max_path_length
+            per_sample_hops = None
+
         
         # Generate paths for each sample (up to their predicted count)
         all_entities_list = []
@@ -592,7 +617,7 @@ class KGPathDiffusionModel(nn.Module):
             entities, relations = self.diffusion.sample(
                 self.denoiser,
                 question_seq,
-                path_length=path_length,
+                path_length=effective_path_length,
                 question_mask=~question_attention_mask.bool(),
                 temperature=curr_temp
             )
@@ -609,7 +634,18 @@ class KGPathDiffusionModel(nn.Module):
         all_entities = torch.stack(all_entities_list, dim=1)
         all_relations = torch.stack(all_relations_list, dim=1)
         
+        # Truncate relations per-sample based on individual hop predictions
+        # Pad excess positions with PAD token (0) for each sample
+        if per_sample_hops is not None:
+            pad_idx = 0
+            for b in range(B):
+                sample_hops = per_sample_hops[b].item()  # Number of relations for this sample
+                # Pad positions beyond the predicted hop count
+                if sample_hops < all_relations.shape[2]:
+                    all_relations[b, :, sample_hops:] = pad_idx
+        
         return all_entities, all_relations, predicted_counts
+
 
 
 class KGPathDiffusionLightning(pl.LightningModule):
@@ -645,7 +681,8 @@ class KGPathDiffusionLightning(pl.LightningModule):
         use_entity_embeddings: bool = True,
         predict_entities: bool = True,
         use_causal_attention: bool = True,
-        predict_hop_count: bool = True
+        predict_hop_count: bool = True,
+        hop_count_loss_weight: float = 0.5
     ):
         super().__init__()
         self.save_hyperparameters()
@@ -672,6 +709,7 @@ class KGPathDiffusionLightning(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
         self.use_multipath_training = use_multipath_training
+        self.hop_count_loss_weight = hop_count_loss_weight
     
     def load_checkpoint(self, checkpoint_path: str, strict: bool = False) -> Dict[str, Any]:
         """
@@ -780,7 +818,8 @@ class KGPathDiffusionLightning(pl.LightningModule):
             all_target_entities=batch['all_path_entities'],
             all_target_relations=batch['all_path_relations'],
             all_path_lengths=batch['all_path_lengths'],
-            num_paths=batch['num_paths']
+            num_paths=batch['num_paths'],
+            hop_count_loss_weight=self.hop_count_loss_weight
         )
     
     def training_step(self, batch: Dict[str, Any], batch_idx: int) -> torch.Tensor:
@@ -797,15 +836,13 @@ class KGPathDiffusionLightning(pl.LightningModule):
         if 'num_paths_avg' in outputs:
             self.log('train/num_paths_avg', outputs['num_paths_avg'], sync_dist=True)
         
-        # Log path count prediction metrics
-        if 'path_count_loss' in outputs:
-            self.log('train/path_count_loss', outputs['path_count_loss'], sync_dist=True)
+        # Log hop prediction metrics
+        if 'hop_loss' in outputs:
+            self.log('train/hop_loss', outputs['hop_loss'], sync_dist=True)
+        if 'hop_accuracy' in outputs:
+            self.log('train/hop_accuracy', outputs['hop_accuracy'], prog_bar=True, sync_dist=True)
         if 'diffusion_loss' in outputs:
             self.log('train/diffusion_loss', outputs['diffusion_loss'], sync_dist=True)
-        if 'predicted_paths_avg' in outputs:
-            self.log('train/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True)
-        if 'path_count_accuracy' in outputs:
-            self.log('train/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True)
         
         return outputs['loss']
     
@@ -820,15 +857,13 @@ class KGPathDiffusionLightning(pl.LightningModule):
         if 'num_paths_avg' in outputs:
             self.log('val/num_paths_avg', outputs['num_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
         
-        # Log path count prediction metrics
-        if 'path_count_loss' in outputs:
-            self.log('val/path_count_loss', outputs['path_count_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        # Log hop prediction metrics
+        if 'hop_loss' in outputs:
+            self.log('val/hop_loss', outputs['hop_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'hop_accuracy' in outputs:
+            self.log('val/hop_accuracy', outputs['hop_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         if 'diffusion_loss' in outputs:
             self.log('val/diffusion_loss', outputs['diffusion_loss'], sync_dist=True, on_step=False, on_epoch=True)
-        if 'predicted_paths_avg' in outputs:
-            self.log('val/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
-        if 'path_count_accuracy' in outputs:
-            self.log('val/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         
         return outputs['loss']
 
@@ -843,15 +878,13 @@ class KGPathDiffusionLightning(pl.LightningModule):
         if 'num_paths_avg' in outputs:
             self.log('test/num_paths_avg', outputs['num_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
         
-        # Log path count prediction metrics
-        if 'path_count_loss' in outputs:
-            self.log('test/path_count_loss', outputs['path_count_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        # Log hop prediction metrics
+        if 'hop_loss' in outputs:
+            self.log('test/hop_loss', outputs['hop_loss'], sync_dist=True, on_step=False, on_epoch=True)
+        if 'hop_accuracy' in outputs:
+            self.log('test/hop_accuracy', outputs['hop_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         if 'diffusion_loss' in outputs:
             self.log('test/diffusion_loss', outputs['diffusion_loss'], sync_dist=True, on_step=False, on_epoch=True)
-        if 'predicted_paths_avg' in outputs:
-            self.log('test/predicted_paths_avg', outputs['predicted_paths_avg'], sync_dist=True, on_step=False, on_epoch=True)
-        if 'path_count_accuracy' in outputs:
-            self.log('test/path_count_accuracy', outputs['path_count_accuracy'], prog_bar=True, sync_dist=True, on_step=False, on_epoch=True)
         
         return outputs['loss']
     

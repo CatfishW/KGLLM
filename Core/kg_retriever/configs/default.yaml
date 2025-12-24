@@ -1,0 +1,73 @@
+# ============================================================
+# KG Diffusion Retriever Training Config - ~40M Parameters
+# ============================================================
+# Model takes Question + Knowledge Graph as input
+# Uses linear layers to compress KG into features
+# Diffusion transformer generates relation paths
+# ============================================================
+
+train_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/train.parquet
+val_data: 
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/val.parquet
+test_data:
+  - /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet
+  - /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/test.parquet
+vocab_path: /data/Yanlai/KGLLM/Data/vocab_combined.json
+
+# ============================================================
+# Model Architecture (~40M parameters)
+# ============================================================
+model_type: kg_diffusion_retriever
+hidden_dim: 256
+kg_feature_dim: 256
+num_layers: 4
+num_heads: 8
+num_diffusion_steps: 20
+max_path_length: 8
+dropout: 0.1
+num_entity_buckets: 50000  # Larger for full KG
+
+# KG Processing - USE FULL KG
+max_triples: 0  # 0 = use entire KG (no sampling)
+
+# Question Encoder
+question_encoder: sentence-transformers/all-MiniLM-L6-v2
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+tokenizer_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+max_question_length: 64
+
+# Efficiency
+num_workers: 0
+
+# ============================================================
+# Training Setup
+# ============================================================
+batch_size: 4  # Smaller for full KG (9K+ triples)
+num_workers: 4
+learning_rate: 0.0002
+weight_decay: 0.01
+warmup_steps: 2000
+max_steps: 100000
+max_epochs: 200
+gradient_clip: 1.0
+accumulate_grad_batches: 8  # Effective batch size = 32
+early_stopping_patience: 20
+check_val_every_n_epoch: 5
+
+# ============================================================
+# Hardware / Logging
+# ============================================================
+gpus: [0]
+precision: 16-mixed
+strategy: auto  # DDP not needed for single device
+output_dir: /data/Yanlai/KGLLM/Core/kg_retriever/outputs
+experiment_name: kg_diffusion_retriever
+log_path_examples: true
+wandb: false
+seed: 42
+debug: false

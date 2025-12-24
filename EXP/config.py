@@ -59,6 +59,12 @@ class RAGConfig:
     diffusion_num_steps: int = 10  # Steps for likelihood scoring
     diffusion_score_weight: float = 0.5  # Weight vs retrieval score
     
+    # RAG-Guided Generation
+    use_rag_guided_generation: bool = False
+    rag_retrieval_top_k: int = 10  # Number of paths to retrieve for conditioning
+    rag_conditioning_weight: float = 0.3  # Weight for retrieval conditioning
+    rag_diversity_penalty: float = 0.5  # Penalty for repeating relations
+    
     @property
     def train_parquet_path(self) -> Path:
         return Path(self.data_dir) / "train.parquet"

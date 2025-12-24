@@ -96,6 +96,9 @@ checkpoints/
 *.pt
 *.pth
 *.bin
+*.safetensors
+RAG/models/
+Core/diffusion_*/
 
 # TensorBoard logs
 runs/
@@ -103,10 +106,7 @@ logs/
 *.tfevents.*
 
 # Large data files
-*.parquet
 *.npy
-*.jsonl
-*.json
 !**/package.json
 !**/tsconfig.json
 *.dep
@@ -114,6 +114,12 @@ logs/
 *.hdf5
 *.pkl
 *.pickle
+*.parquet
+*.index
+Data/CWQ/
+Data/LLM_Rephrased_CWQ_WebQSP/
+Data/webqsp_final/
+Data/vocab_combined.json
 
 
 # OS generated files

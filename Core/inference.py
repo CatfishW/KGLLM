@@ -40,7 +40,8 @@ def load_model(
         checkpoint_path,
         num_entities=vocab.num_entities,
         num_relations=vocab.num_relations,
-        map_location=device
+        map_location=device,
+        strict=False  # Allow loading checkpoints with extra/missing keys
     )
     model.eval()
     model.to(device)
