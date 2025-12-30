@@ -186,11 +186,12 @@ class GNNRetriever(pl.LightningModule):
         self.warmup_steps = warmup_steps
         self.max_steps = max_steps
         
-        # Special tokens
+        # Special tokens (must match dataset.py)
         self.PAD_IDX = 0
         self.UNK_IDX = 1
-        self.EOS_IDX = 2
-        self.RELATION_OFFSET = 3
+        self.MASK_IDX = 2
+        self.EOS_IDX = 3
+        self.RELATION_OFFSET = 4
         
         # Question encoder
         self.question_encoder = QuestionEncoder(
@@ -199,8 +200,8 @@ class GNNRetriever(pl.LightningModule):
             freeze=freeze_question_encoder,
         )
         
-        # Relation embeddings
-        self.relation_embedding = nn.Embedding(num_relations + 3, hidden_dim)
+        # Relation embeddings (+4 for PAD, UNK, MASK, EOS)
+        self.relation_embedding = nn.Embedding(num_relations + 4, hidden_dim)
         
         # Entity hash embeddings
         self.entity_embedding = nn.Embedding(num_entity_buckets + 1, hidden_dim // 2)
@@ -231,8 +232,8 @@ class GNNRetriever(pl.LightningModule):
             dropout=dropout,
         )
         
-        # Output projection
-        self.output_projection = nn.Linear(hidden_dim, num_relations + 3)
+        # Output projection (+4 for PAD, UNK, MASK, EOS)
+        self.output_projection = nn.Linear(hidden_dim, num_relations + 4)
     
     def encode_kg(
         self,

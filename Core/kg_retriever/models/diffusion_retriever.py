@@ -166,7 +166,7 @@ class DiffusionTransformer(nn.Module):
         self.max_path_length = max_path_length
         
         # Relation embedding for path positions
-        self.relation_embedding = nn.Embedding(num_relations + 3, hidden_dim)  # +3 for PAD, UNK, MASK
+        self.relation_embedding = nn.Embedding(num_relations + 4, hidden_dim)  # +4 for PAD, UNK, MASK, EOS
         self.position_embedding = nn.Embedding(max_path_length, hidden_dim)
         
         # Timestep embedding
@@ -192,12 +192,13 @@ class DiffusionTransformer(nn.Module):
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
         # Output projection
-        self.output_projection = nn.Linear(hidden_dim, num_relations + 3)
+        self.output_projection = nn.Linear(hidden_dim, num_relations + 4)
         
         # Special token indices
         self.PAD_IDX = 0
         self.UNK_IDX = 1
         self.MASK_IDX = 2
+        self.EOS_IDX = 3  # End of sequence token
     
     def get_timestep_embedding(self, timesteps: torch.Tensor) -> torch.Tensor:
         """Sinusoidal timestep embedding."""
@@ -323,6 +324,7 @@ class KGDiffusionRetriever(pl.LightningModule):
         self.PAD_IDX = 0
         self.UNK_IDX = 1
         self.MASK_IDX = 2
+        self.EOS_IDX = 3  # End of sequence token
     
     def add_noise(
         self,

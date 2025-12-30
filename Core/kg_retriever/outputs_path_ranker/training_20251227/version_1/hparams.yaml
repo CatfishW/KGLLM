@@ -1,0 +1,11 @@
+encoder_name: BAAI/bge-base-en-v1.5
+hidden_dim: 768
+dropout: 0.1
+learning_rate: 2.0e-05
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000
+freeze_encoder: false
+temperature: 0.05
+max_candidates: 100
+max_path_length: 64

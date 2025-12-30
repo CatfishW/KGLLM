@@ -1,0 +1,66 @@
+ablations:
+  frozen_encoder:
+    model:
+      freeze_encoder: true
+    training:
+      learning_rate: 5e-4
+  no_hop_aux:
+    hop_auxiliary:
+      enabled: false
+      weight: 0.0
+  no_late_interaction:
+    late_interaction:
+      temperature: 1.0
+checkpointing:
+  mode: max
+  monitor: val/acc
+  save_last: true
+  save_top_k: 3
+data:
+  dataset: webqsp
+  max_candidates: 100
+  num_workers: 4
+  test_path: data/webqsp/test.json
+  train_path: data/webqsp/train.json
+  val_path: data/webqsp/dev.json
+hop_auxiliary:
+  cumulative: true
+  enabled: true
+  loss_weights:
+  - 0.1
+  - 0.2
+  - 0.3
+  - 0.4
+  temperature: 1.0
+  weight: 0.3
+late_interaction:
+  learnable_temperature: false
+  normalize: true
+  temperature: 0.02
+logging:
+  log_every_n_steps: 50
+  val_check_interval: 0.25
+loss:
+  margin: 1.0
+  margin_weight: 0.1
+  primary_temperature: 1.0
+model:
+  dropout: 0.1
+  encoder_name: BAAI/bge-base-en-v1.5
+  freeze_encoder: false
+  hidden_dim: 768
+  max_hops: 4
+  max_path_length: 64
+  max_question_length: 128
+  name: HopColBERTReranker
+  projection_dim: 128
+training:
+  batch_size: 32
+  gradient_accumulation_steps: 1
+  gradient_clip_val: 1.0
+  learning_rate: 2e-5
+  max_epochs: 300
+  max_steps: -1
+  precision: 16-mixed
+  warmup_ratio: 0.1
+  weight_decay: 0.01

@@ -1,0 +1,16 @@
+num_relations: 6752
+hidden_dim: 384
+kg_feature_dim: 384
+num_layers: 6
+num_heads: 8
+num_diffusion_steps: 30
+max_path_length: 8
+num_entity_buckets: 50000
+dropout: 0.05
+learning_rate: 0.0003
+weight_decay: 0.005
+warmup_steps: 1000
+max_steps: 150000
+question_encoder_name: sentence-transformers/all-MiniLM-L6-v2
+freeze_question_encoder: true
+label_smoothing: 0.1

@@ -58,7 +58,8 @@ class KGRetrieverDataset(Dataset):
         self.PAD_IDX = 0
         self.UNK_IDX = 1
         self.MASK_IDX = 2
-        self.RELATION_OFFSET = 3  # Real relations start at index 3
+        self.EOS_IDX = 3  # End of sequence token
+        self.RELATION_OFFSET = 4  # Real relations start at index 4
         
         # Load data
         self.data = self._load_data(data_path)
@@ -288,24 +289,31 @@ class KGRetrieverDataset(Dataset):
     
     def _encode_path(self, path: Dict) -> Tuple[torch.Tensor, torch.Tensor, int]:
         """
-        Encode a single reasoning path.
+        Encode a single reasoning path with EOS token.
         
         Returns:
-            target_relations: [max_path_length]
-            path_mask: [max_path_length]
-            path_length: int
+            target_relations: [max_path_length] - relations followed by EOS and PAD
+            path_mask: [max_path_length] - 1.0 for relations and EOS, 0.0 for PAD
+            path_length: int - number of relations + 1 (for EOS)
         """
         relations = path.get('relations', [])
-        path_length = min(len(relations), self.max_path_length)
+        # Reserve space for EOS token
+        num_relations = min(len(relations), self.max_path_length - 1)
         
         target_relations = torch.full((self.max_path_length,), self.PAD_IDX, dtype=torch.long)
         path_mask = torch.zeros(self.max_path_length, dtype=torch.float)
         
-        for i, rel in enumerate(relations[:path_length]):
+        # Encode relations
+        for i, rel in enumerate(relations[:num_relations]):
             target_relations[i] = self.get_relation_idx(rel)
             path_mask[i] = 1.0
         
-        return target_relations, path_mask, path_length
+        # Add EOS token after the last relation
+        target_relations[num_relations] = self.EOS_IDX
+        path_mask[num_relations] = 1.0
+        
+        # path_length includes the EOS token
+        return target_relations, path_mask, num_relations + 1
     
     def __len__(self) -> int:
         return len(self.data)

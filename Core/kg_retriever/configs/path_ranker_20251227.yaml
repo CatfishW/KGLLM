@@ -1,0 +1,49 @@
+# ============================================================
+# KG Path Ranker Training Config
+# Experiment: training_20251227
+# ============================================================
+
+# Data Paths
+train_data: 
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train.parquet
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train.parquet
+val_data: 
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_val.parquet
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_val.parquet
+test_data:
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_test.parquet
+  - /data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_test.parquet
+
+# Model Architecture
+encoder_name: BAAI/bge-base-en-v1.5
+hidden_dim: 768
+dropout: 0.1
+temperature: 0.05
+freeze_encoder: false  # Fine-tune the encoder
+
+# Input Constraints
+max_question_length: 128
+max_path_length: 64
+max_candidates: 100
+num_negatives: 99  # 1 positive + 99 negatives = 100 candidates during training
+
+# Training Setup
+batch_size: 1  # Reduced from 16 to fix OOM (100 candidates * 1 batch = 100 seqs)
+num_workers: 4
+learning_rate: 2.0e-5
+weight_decay: 0.01
+warmup_steps: 1000
+max_steps: 50000
+max_epochs: 20
+gradient_clip: 1.0
+accumulate_grad_batches: 32  # Effective batch size = 32
+early_stopping_patience: 5
+val_check_interval: 0.5
+
+# Hardware / Logging
+gpus: [0]
+precision: 16-mixed
+strategy: auto
+output_dir: /data/Yanlai/KGLLM/Core/kg_retriever/outputs_path_ranker
+experiment_name: training_20251227
+seed: 42

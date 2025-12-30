@@ -1,0 +1,88 @@
+# HopColBERT Reranker Configuration
+# State-of-the-art path reranking with late interaction and hop auxiliary loss
+
+model:
+  name: "HopColBERTReranker"
+  encoder_name: "BAAI/bge-base-en-v1.5"
+  hidden_dim: 768
+  projection_dim: 128  # Compressed for efficient MaxSim
+  max_hops: 6  # CWQ has up to 12, but 99.97% are ≤6
+  max_question_length: 128
+  max_path_length: 64
+  dropout: 0.1
+  freeze_encoder: false  # UNFROZEN - fine-tune for best performance
+
+late_interaction:
+  temperature: 0.05  # Match PathRanker temperature (scale=20)
+  normalize: true
+  learnable_temperature: false
+
+hop_auxiliary:
+  enabled: true
+  weight: 0.1  # Reduced from 0.3 - let primary loss dominate initially
+  loss_weights: [0.05, 0.1, 0.15, 0.2, 0.25, 0.25]  # Progressive: 6 hops
+  cumulative: true  # Use cumulative hop embeddings
+  temperature: 1.0
+
+loss:
+  primary_temperature: 1.0  # No additional scaling (late_interaction already scales)
+  margin_weight: 0.0  # Disabled - keep it simple like PathRanker
+  margin: 1.0
+
+training:
+  learning_rate: 0.00002  # 2e-5, using decimal to avoid YAML parsing issues
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  max_epochs: 300  # HIGH - train longer
+  max_steps: -1   # Use epochs instead of steps
+  batch_size: 8  # Reduced from 32 to avoid OOM (100 candidates)
+  gradient_accumulation_steps: 4  # Effective batch: 8*4=32 per GPU
+  gradient_clip_val: 1.0
+  precision: "16-mixed"  # Mixed precision for speed
+
+data:
+  dataset: "combined"  # webqsp + cwq + augmented
+  train_paths:
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train_augmented.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train_augmented.parquet"
+  val_paths:
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_val.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_val.parquet"
+  test_paths:
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_test.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_test.parquet"
+  max_candidates: 100
+  num_workers: 4
+  num_negatives: 99
+
+checkpointing:
+  save_top_k: 3
+  monitor: "val/acc"
+  mode: "max"
+  save_last: true
+
+logging:
+  log_every_n_steps: 50
+  val_check_interval: 0.25
+
+# Ablation configurations
+ablations:
+  # No hop auxiliary loss
+  no_hop_aux:
+    hop_auxiliary:
+      enabled: false
+      weight: 0.0
+  
+  # No late interaction (bi-encoder baseline)
+  no_late_interaction:
+    late_interaction:
+      temperature: 1.0  # Higher temp = more uniform
+  
+  # Frozen encoder (faster training)
+  frozen_encoder:
+    model:
+      freeze_encoder: true
+    training:
+      learning_rate: 5e-4  # Higher LR for heads

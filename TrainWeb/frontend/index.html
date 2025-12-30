@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TRAIN-OS v2.0</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+    <div class="crt-overlay"></div>
+    <div class="scanlines"></div>
+
+    <div class="container">
+        <header>
+            <div class="logo">
+                <h1>TRAIN-OS <span class="blink">_</span></h1>
+                <div class="subtitle">NEURAL NETWORK TRAINING MONITOR SYSTEM</div>
+            </div>
+            <div class="system-status">
+                STATUS: <span id="connection-status">CONNECTING...</span>
+            </div>
+        </header>
+
+        <main>
+            <!-- Tab Navigation -->
+            <div class="tab-nav">
+                <button class="tab-btn active" data-tab="metrics-tab">
+                    <svg class="bolt-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg> METRICS
+                </button>
+                <button class="tab-btn" data-tab="architecture-tab">
+                    <svg class="bolt-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg> ARCHITECTURE
+                </button>
+                <button class="tab-btn" data-tab="eval-tab">
+                    <svg class="bolt-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg> EVAL
+                </button>
+                <button class="tab-btn" data-tab="logs-tab">
+                    <svg class="bolt-icon" viewBox="0 0 24 24" width="16" height="16" fill="currentColor">
+                        <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
+                    </svg> LOGS
+                </button>
+            </div>
+
+            <div class="tab-content">
+                <!-- Metrics Tab -->
+                <div id="metrics-tab" class="tab-panel active">
+                    <div class="grid-layout-metrics">
+                        <!-- Metrics Panel -->
+                        <div class="panel metrics-panel">
+                            <div class="panel-header">=== TRAINING METRICS ===</div>
+                            <div class="chart-container">
+                                <canvas id="metricsCanvas"></canvas>
+                            </div>
+                            <div class="stats-row">
+                                <div class="stat-box">
+                                    <span class="label">CURRENT LOSS</span>
+                                    <span class="value" id="val-loss">--.--</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="label">ACCURACY</span>
+                                    <span class="value" id="val-acc">--%</span>
+                                </div>
+                                <div class="stat-box">
+                                    <span class="label">EPOCH</span>
+                                    <span class="value" id="val-epoch">--</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Config Panel -->
+                        <div class="panel config-panel">
+                            <div class="panel-header">=== SYSTEM CONFIGURATION ===</div>
+                            <div class="config-content" id="config-display">
+                                LOADING DATA...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Architecture Tab -->
+                <div id="architecture-tab" class="tab-panel">
+                    <div class="panel architecture-panel">
+                        <div class="panel-header">=== MODEL ARCHITECTURE ===</div>
+                        <div class="architecture-container">
+                            <div id="model-diagram"></div>
+                        </div>
+                        <div class="architecture-legend">
+                            <span class="legend-item"><span class="legend-color" style="background:#4CAF50;"></span>
+                                Encoder (Frozen)</span>
+                            <span class="legend-item"><span class="legend-color" style="background:#FF9800;"></span>
+                                Attention</span>
+                            <span class="legend-item"><span class="legend-color" style="background:#9C27B0;"></span>
+                                Diffusion</span>
+                            <span class="legend-item"><span class="legend-color" style="background:#F44336;"></span> MLP
+                                Heads</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Eval Tab -->
+                <div id="eval-tab" class="tab-panel">
+                    <div class="panel eval-panel">
+                        <div class="panel-header">
+                            === EVALUATION RESULTS ===
+                            <div style="float: right; display: flex; align-items: center; font-size: 0.8rem;">
+                                <span style="margin-right: 8px; opacity: 0.8;">Samples:</span>
+                                <input type="number" id="eval-limit-input" value="3" min="1" max="1000"
+                                    style="width: 60px; background: rgba(0,0,0,0.5); border: 1px solid #00d4ff; color: #00ff88; padding: 2px 5px;">
+                                <button id="btn-refresh-eval" class="control-btn" style="margin-left: 10px;"
+                                    title="Refresh">↻</button>
+                            </div>
+                        </div>
+                        <div class="eval-container" id="eval-display">
+                            Loading evaluation results...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Logs Tab -->
+                <div id="logs-tab" class="tab-panel">
+                    <div class="panel logs-panel-full">
+                        <div class="panel-header">
+                            === SYSTEM LOGS ===
+                            <div class="logs-controls">
+                                <input type="text" id="log-search" placeholder="Search logs..."
+                                    class="log-search-input">
+                                <button id="btn-clear-search" class="control-btn" title="Clear search">✕</button>
+                                <button id="btn-auto-scroll" class="control-btn active" title="Auto-scroll">↓</button>
+                                <select id="log-level-filter" class="log-level-select">
+                                    <option value="all">All Levels</option>
+                                    <option value="error">Errors</option>
+                                    <option value="warning">Warnings</option>
+                                    <option value="info">Info</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="logs-content" id="logs-display">
+                            INITIALIZING LOG SEQUENCE...
+                        </div>
+                        <div class="logs-footer">
+                            <span id="log-count">0 lines</span>
+                            <span id="filtered-count"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Chart Tooltip -->
+        <div id="chart-tooltip" class="chart-tooltip" style="display: none;">
+            <div class="tooltip-content">
+                <div class="tooltip-epoch">Epoch: <span id="tooltip-epoch">-</span></div>
+                <div class="tooltip-loss">Loss: <span id="tooltip-loss">-</span></div>
+                <div class="tooltip-acc">Accuracy: <span id="tooltip-acc">-</span></div>
+            </div>
+        </div>
+
+        <!-- Keyboard Shortcuts Modal -->
+        <div id="shortcuts-modal" class="modal" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">⌨️ Keyboard Shortcuts</div>
+                <div class="shortcut-list">
+                    <div><kbd>1</kbd> Metrics Tab</div>
+                    <div><kbd>2</kbd> Architecture Tab</div>
+                    <div><kbd>3</kbd> Logs Tab</div>
+                    <div><kbd>R</kbd> Refresh Data</div>
+                    <div><kbd>E</kbd> Export Metrics</div>
+                    <div><kbd>A</kbd> Expand All Modules</div>
+                    <div><kbd>C</kbd> Collapse All Modules</div>
+                    <div><kbd>/</kbd> Focus Log Search</div>
+                    <div><kbd>?</kbd> Show Shortcuts</div>
+                    <div><kbd>Esc</kbd> Close Modal</div>
+                </div>
+                <button onclick="closeShortcutsModal()" class="modal-close">Close</button>
+            </div>
+        </div>
+
+        <footer>
+            <span class="footer-left">
+                <button id="btn-refresh" class="footer-btn" title="Refresh (R)">↻ Refresh</button>
+                <button id="btn-export" class="footer-btn" title="Export (E)">⬇ Export</button>
+                <button id="btn-shortcuts" class="footer-btn" title="Shortcuts (?)">⌨ Keys</button>
+            </span>
+            <span>SYSTEM TIME: <span id="sys-time">00:00:00</span> | MEM: OK | GPU: ONLINE</span>
+            <span class="footer-right">
+                <span id="last-update">Last update: --</span>
+            </span>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+
+</html>
