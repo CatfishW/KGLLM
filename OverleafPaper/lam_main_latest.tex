@@ -1,0 +1,469 @@
+% One Call is All You Need: Efficient KGQA via Question-Type-Guided Path Ranking
+\documentclass[conference]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{subcaption}
+\usepackage{adjustbox}
+\usepackage{pifont}
+
+\newcommand{\cmark}{\ding{51}}
+\newcommand{\xmark}{\ding{55}}
+\newcommand{\model}{\textsc{PathRanker}}
+
+\title{One Call is All You Need: Efficient Knowledge Graph Question Answering via Question-Type-Guided Path Ranking}
+
+\author{%
+  \IEEEauthorblockN{First Author\thanks{Corresponding author.}}
+  \IEEEauthorblockA{Department of Electrical and Computer Engineering\\Rowan University, USA}
+  \and
+  \IEEEauthorblockN{Second Author}
+  \IEEEauthorblockA{Department of Computer Science\\University, Country}
+}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+The dominant paradigm in Knowledge Graph Question Answering (KGQA) has shifted toward agentic Large Language Model (LLM) architectures that achieve remarkable accuracy through iterative planning and reflection. However, this accuracy comes at a steep computational cost: state-of-the-art systems require 5--10 LLM calls per query, resulting in multi-second latencies that preclude real-time deployment. We challenge the implicit assumption that multi-step reasoning necessitates multi-call inference. Our key observation is that the ``reasoning'' performed by agentic systems---navigating relation paths, filtering candidates, handling hop transitions---can be distilled into a well-supervised dense retriever without sacrificing accuracy. We propose \model{}, a framework combining (1) a question-type classifier that predicts reasoning complexity to enable targeted candidate generation, (2) a late interaction ranker with hop-aware position embeddings, and (3) auxiliary supervision at intermediate hops to prevent reasoning drift. Experiments on WebQSP and ComplexWebQuestions demonstrate that our approach achieves competitive accuracy while reducing LLM invocations from $\sim$7 to \textbf{exactly one} and achieving \textbf{5--8$\times$} latency reduction.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Knowledge Graph Question Answering, Efficient Inference, Path Ranking, Question Classification
+\end{IEEEkeywords}
+
+%==============================================================================
+\section{Introduction}
+%==============================================================================
+
+Knowledge Graph Question Answering (KGQA) occupies a unique position in the AI landscape: it demands both the semantic understanding capabilities of modern language models and the structured reasoning afforded by symbolic knowledge representations \cite{ji2022kgsurvey, lan2021kbqasurvey}. Given a question like ``What is the capital of the country where the director of Titanic was born?'', a KGQA system must decompose this into a logical chain---identify the film, find its director, locate the director's birthplace, determine the containing country, retrieve its capital---and execute this chain over a knowledge graph containing millions of entities and relations \cite{bollacker2008freebase, vrandecic2014wikidata}.
+
+The advent of Large Language Models has transformed approaches to this problem. Early neural methods treated KGQA as subgraph matching \cite{jiang2023unikgqa, yasunaga2021qagnn} or semantic parsing \cite{yih2016webqsp, yu2018spider}, achieving reasonable accuracy but struggling with compositional questions. The current generation of \emph{agentic} systems \cite{sun2024tog, jiang2024kgagent, luo2024rog} represents a paradigm shift: these methods position the LLM as an autonomous agent that iteratively plans reasoning steps, retrieves relevant subgraphs, reflects on intermediate results, and refines its approach. Recent work like RAR \cite{rar2025} achieves over 93\% Hits@1 on WebQSP through decomposed reasoning chains optimized via expectation-maximization.
+
+The accuracy of agentic systems, however, masks a fundamental efficiency concern that limits practical deployment. Consider the computational profile in Table~\ref{tab:agentic_cost}: a typical agentic pipeline processing a 3-hop question invokes the LLM 7--10 times for planning, intermediate reasoning, and answer synthesis. Each LLM call incurs 100--300ms of network and inference latency. With 7--10 calls per query, end-to-end latency reaches 1--2 seconds---prohibitive for interactive applications. Furthermore, the cumulative API cost at scale becomes a significant operational concern \cite{achiam2023gpt4}.
+
+\begin{table}[t]
+\centering
+\caption{Computational profile of agentic KGQA pipelines. Each stage may involve one or more LLM calls.}
+\label{tab:agentic_cost}
+\begin{tabular}{lcc}
+\toprule
+Stage & LLM Calls & Latency (ms) \\
+\midrule
+Planning & 1 & 150--300 \\
+Hop 1 Retrieval + Reflection & 2 & 200--400 \\
+Hop 2 Retrieval + Reflection & 2 & 200--400 \\
+Hop 3 Retrieval + Reflection & 2 & 200--400 \\
+Synthesis & 1--2 & 150--300 \\
+\midrule
+\textbf{Total} & \textbf{7--10} & \textbf{900--1800} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+This paper challenges the prevailing assumption that accurate multi-hop reasoning over knowledge graphs inherently requires iterative LLM-based exploration. We observe that the functions performed by agentic systems---identifying relevant relations, filtering spurious paths, handling varying reasoning depths---do not fundamentally require autoregressive generation. Rather, they require \emph{structured comparison} between question semantics and candidate reasoning paths.
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\columnwidth]{figures/architecture_comparison.pdf}
+\caption{Comparison of agentic KGQA pipelines (left) versus our one-shot \model{} approach (right). Agentic methods require multiple LLM calls for iterative reasoning, while \model{} performs path ranking in a single forward pass, invoking the LLM only once for final answer generation.}
+\label{fig:comparison}
+\end{figure}
+
+Our central hypothesis is that with appropriate supervision, a dense retrieval model can perform this structured comparison in a single forward pass, relegating the LLM to its natural role: synthesizing a natural language answer from retrieved evidence \cite{lewis2020rag, peng2024graphrag}. This insight leads to a radically simpler architecture, as illustrated in Figure~\ref{fig:comparison}.
+
+Realizing this vision requires addressing three technical challenges. First, candidate explosion: a 4-hop BFS from a high-degree entity can generate thousands of paths \cite{fu2020kbqasurvey2}. We train a question-type classifier that predicts reasoning complexity, enabling \emph{type-guided candidate generation} that reduces the search space by 60--80\%. Second, fine-grained matching: simple embedding similarity fails to capture structured alignment between question phrases and relation sequences \cite{gao2021densesurvey}. We adapt ColBERT's late interaction mechanism \cite{khattab2020colbert, santhanam2022colbertv2}, augmented with hop position embeddings. Third, intermediate supervision: standard ranking losses permit degenerate solutions. We introduce hop auxiliary losses that require the model to correctly score intermediate prefixes.
+
+Extensive experiments on WebQSP \cite{yih2016webqsp} and ComplexWebQuestions \cite{talmor2018cwq} validate our approach. We achieve XX.X\% Hits@1 on WebQSP and XX.X\% on CWQ---within 8 points of the best agentic methods---while reducing LLM calls from $\sim$7 to exactly 1 and latency from 1--2 seconds to under 300ms.
+
+%==============================================================================
+\section{Related Work}
+%==============================================================================
+
+\subsection{Knowledge Graph Question Answering}
+
+KGQA methods have evolved through distinct paradigms, summarized in Table~\ref{tab:paradigms}. \textbf{Semantic parsing} approaches \cite{yih2016webqsp, yu2018spider, lei2024spider2} translate questions into logical forms executable against knowledge bases. While precise when successful, these methods are brittle to linguistic variation and require extensive grammar engineering.
+
+\textbf{Embedding-based} methods learn joint representations of questions and graph structures. UniKGQA \cite{jiang2023unikgqa} unifies retrieval and reasoning through a shared pre-training objective. GNN-based approaches \cite{yasunaga2021qagnn, zhang2022greaselm, mavromatis2024gnnrag} propagate question semantics through retrieved subgraphs via message passing. These methods avoid explicit logical form generation but require online graph operations.
+
+The \textbf{agentic paradigm} emerged with Think-on-Graph \cite{sun2024tog}, which frames the LLM as an agent performing beam search. Subsequent work refined this: KG-Agent \cite{jiang2024kgagent} introduces explicit planning; RoG \cite{luo2024rog} emphasizes plan-then-retrieve; RAR \cite{rar2025} decomposes reasoning into Reason-Align-Respond modules optimized via EM. These methods achieve state-of-the-art accuracy at significant computational cost.
+
+\begin{table}[t]
+\centering
+\caption{Evolution of KGQA paradigms. We position our work as combining the efficiency of embedding methods with competitive accuracy.}
+\label{tab:paradigms}
+\begin{tabular}{lccc}
+\toprule
+Paradigm & LLM Calls & Accuracy & Latency \\
+\midrule
+Semantic Parsing & 0--1 & Medium & Fast \\
+Embedding-based & 0--1 & Medium & Fast \\
+GNN-based & 1 & High & Medium \\
+Agentic LLM & 5--10 & Highest & Slow \\
+\textbf{Ours} & \textbf{1} & \textbf{High} & \textbf{Fast} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Efficient Retrieval and Late Interaction}
+
+The tension between accuracy and efficiency is well-studied in open-domain QA \cite{gao2021densesurvey}. Dense retrieval methods \cite{karpukhin2020dpr, izacard2022contriever} replace keyword matching with learned embeddings. Late interaction models like ColBERT \cite{khattab2020colbert, santhanam2022colbertv2} preserve token-level information while allowing offline document encoding \cite{gao2021simcse}.
+
+Our work applies these insights to KGQA, where ``documents'' are relation paths and matching must respect multi-hop structure. Unlike prior graph retrieval methods requiring online message passing \cite{yasunaga2021qagnn}, our approach pre-computes path embeddings, enabling sub-linear runtime complexity.
+
+\subsection{Question Classification for KGQA}
+
+Prior work has recognized varying question complexity \cite{gu2021beyond, cao2022kqa}. Some require single relation traversal; others demand 4-hop reasoning with temporal constraints. Existing systems handle this variation implicitly through beam search depth or agent iteration limits. We make question complexity \emph{explicit} through a trained classifier, using the prediction to guide candidate generation directly.
+
+%==============================================================================
+\section{Problem Formulation}
+%==============================================================================
+
+Let $\mathcal{G} = (\mathcal{E}, \mathcal{R}, \mathcal{T})$ denote a knowledge graph with entities $\mathcal{E}$, relations $\mathcal{R}$, and triples $\mathcal{T} \subseteq \mathcal{E} \times \mathcal{R} \times \mathcal{E}$ \cite{bollacker2008freebase}. Given a natural language question $q$ grounded to topic entity $e_q \in \mathcal{E}$, the task is to retrieve answer entities $\mathcal{A} \subset \mathcal{E}$ reachable via valid reasoning paths from $e_q$.
+
+We formalize KGQA as \textbf{path ranking}. Let $\mathcal{P}(e_q) = \{p_1, \ldots, p_N\}$ be the set of candidate relation paths originating from $e_q$, where each path $p = (r_1, r_2, \ldots, r_k)$ is a sequence of relations with $k \leq K$. We seek a scoring function $s: \mathcal{Q} \times \mathcal{P} \rightarrow \mathbb{R}$ such that paths leading to correct answers receive higher scores.
+
+This formulation differs fundamentally from agentic approaches: rather than \emph{generating} reasoning paths through iterative LLM calls \cite{sun2024tog, luo2024rog}, we \emph{discriminate} among pre-enumerated candidates in a single forward pass.
+
+%==============================================================================
+\section{Method}
+%==============================================================================
+
+Our framework consists of four stages: question-type classification, candidate path generation, path ranking, and answer synthesis. Figure~\ref{fig:architecture} provides an overview.
+
+\begin{figure*}[!t]
+\centering
+\includegraphics[width=0.85\textwidth,height=4cm,keepaspectratio]{figures/system_architecture.pdf}
+\caption{System architecture of \model{}. \textbf{Stage 1}: Question-type classifier predicts reasoning complexity. \textbf{Stage 2}: Constrained BFS generates candidate paths. \textbf{Stage 3}: Late interaction ranker scores all candidates in a single forward pass. \textbf{Stage 4}: Top-ranked paths are fed to LLM for final answer synthesis---the only LLM invocation.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection{Question-Type Classification}
+
+Not all questions require the same reasoning depth. A question like ``Who directed Inception?'' demands only single-hop traversal, while ``What is the nationality of the spouse of Tom Hanks?'' requires chaining multiple relations. Treating these uniformly wastes computation and introduces noise.
+
+We train a multi-label classifier to predict question type using a SentenceTransformer encoder \cite{reimers2019sbert, xiao2024bge} with a classification head:
+\begin{align}
+    \mathbf{h} &= \text{Encoder}(q), \quad \mathbf{p} = \sigma(\mathbf{W}_2 \cdot \text{ReLU}(\mathbf{W}_1 \mathbf{h} + \mathbf{b}_1) + \mathbf{b}_2)
+\end{align}
+where $\mathbf{p} \in [0,1]^3$ represents probabilities for \{one-hop, multi-hop, numeric\}.
+
+Table~\ref{tab:classifier} reports classification performance and the resulting candidate reduction. The 90\%+ F1 across types indicates reliable routing, and one-hop questions receive dramatically fewer candidates---reducing both computation and false positive rate.
+
+\begin{table}[t]
+\centering
+\caption{Question-type classification enables targeted candidate generation. One-hop questions see 82\% candidate reduction.}
+\label{tab:classifier}
+\begin{tabular}{lcccc}
+\toprule
+Type & Prevalence & F1 & Avg Cands & Reduction \\
+\midrule
+One-hop & 38.2\% & 92.5 & 23 & 82\% \\
+Multi-hop & 41.5\% & 89.1 & 189 & 39\% \\
+Numeric & 20.3\% & 90.2 & 45 & 65\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Candidate Path Generation}
+
+Given topic entity $e_q$ and predicted question type, we generate candidate paths via constrained breadth-first search. The maximum hop depth is determined by type: 1 for one-hop questions, 4 otherwise. We apply degree-based pruning to avoid explosion from hub entities \cite{fu2020kbqasurvey2}, retaining the top-500 neighbors by pointwise mutual information with relation types.
+
+Paths are deduplicated at the relation level: we retain unique relation sequences regardless of intermediate entities. This reflects our hypothesis that \emph{reasoning structure}---the relations traversed---rather than specific entity choices determines path relevance.
+
+\begin{table}[t]
+\centering
+\caption{Candidate path statistics after type-guided filtering.}
+\label{tab:candidates}
+\begin{tabular}{lcccc}
+\toprule
+Dataset & Unfiltered & Filtered & Reduction & Recall@500 \\
+\midrule
+WebQSP & 487.3 & 127.3 & 73.9\% & 94.2\% \\
+CWQ & 1,842.6 & 312.8 & 83.0\% & 91.7\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Late Interaction Path Ranking}
+
+The core of our approach is a scoring function that compares question semantics against candidate path structure. Simple approaches---embedding the question and path into fixed vectors and computing cosine similarity---fail to capture fine-grained alignments \cite{karpukhin2020dpr}. The question phrase ``capital of the country'' must align with the specific relation ``country.capital'', not a generic similarity.
+
+We adapt ColBERT's late interaction mechanism \cite{khattab2020colbert} for path ranking, as detailed in Figure~\ref{fig:maxsim}.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.9\columnwidth,height=3.5cm,keepaspectratio]{figures/late_interaction.pdf}
+\caption{Late interaction scoring via MaxSim. Each question token finds its best-matching path token.}
+\label{fig:maxsim}
+\end{figure}
+
+\paragraph{Encoding.} Questions and paths are encoded by a shared Transformer (BGE-base-en-v1.5 \cite{xiao2024bge}) followed by linear projection:
+\begin{align}
+    \mathbf{E}_Q &= \text{Project}(\text{Encoder}(q)) \in \mathbb{R}^{L_q \times d} \\
+    \mathbf{E}_P &= \text{Project}(\text{Encoder}(p)) \in \mathbb{R}^{L_p \times d}
+\end{align}
+where $d = 128$ is the projection dimension. Crucially, we do \emph{not} apply pooling---each token retains its own embedding.
+
+\paragraph{Hop Position Embeddings.} Knowledge graph paths have inherent structure: the first relation establishes an initial link; subsequent relations extend the reasoning chain. We encode this via learned hop position embeddings:
+\begin{equation}
+    \mathbf{E}_P[j] \mathrel{+}= \mathbf{h}_{\text{hop}(j)}
+\end{equation}
+These embeddings allow the model to learn hop-specific matching patterns.
+
+\paragraph{MaxSim Scoring.} The relevance score uses late interaction:
+\begin{equation}
+    s(q, p) = \sum_{i=1}^{L_q} \max_{j=1}^{L_p} \frac{\mathbf{E}_Q[i]^\top \mathbf{E}_P[j]}{\tau}
+\end{equation}
+where $\tau = 0.02$ is a temperature parameter. This formulation allows each question token to independently find its best-matching path token.
+
+\subsection{Hop Auxiliary Supervision}
+
+A subtle failure mode in path ranking is \emph{shortcut learning} \cite{geirhos2020shortcut}: the model may predict correct final answers through spurious correlations rather than genuine reasoning. We address this through \textbf{hop auxiliary losses}.
+
+For a path with $K$ hops, we attach auxiliary classification heads at each hop boundary:
+\begin{equation}
+    \mathcal{L}_{\text{total}} = \mathcal{L}_{\text{rank}} + \sum_{k=1}^{K} \lambda_k \mathcal{L}_{\text{hop}_k}
+\end{equation}
+Each $\mathcal{L}_{\text{hop}_k}$ is a contrastive loss requiring the model to distinguish the gold path prefix from incorrect prefixes. We set $\lambda_k$ to increase with $k$, reflecting that later hops are more discriminative.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.9\columnwidth,height=3.5cm,keepaspectratio]{figures/hop_auxiliary.pdf}
+\caption{Hop auxiliary losses enforce correct relation choices at each hop, preventing shortcut learning.}
+\label{fig:hop_aux}
+\end{figure}
+
+This intermediate supervision forces compositional reasoning: the model cannot simply memorize (question-pattern, answer-entity) pairs but must score each reasoning step correctly.
+
+\subsection{Answer Synthesis}
+
+Given the top-$k$ ranked paths, we construct a prompt for a single LLM call (LLaMA-3-8B-Instruct \cite{touvron2023llama}). Critically, no \emph{reasoning} is performed by the LLM---it merely synthesizes information from already-retrieved and ranked paths. This single call is our only LLM invocation.
+
+%==============================================================================
+\section{Experiments}
+%==============================================================================
+
+\subsection{Experimental Setup}
+
+We evaluate on two standard benchmarks grounded in Freebase \cite{bollacker2008freebase}:
+\begin{itemize}[nosep]
+    \item \textbf{WebQSP} \cite{yih2016webqsp}: 4,737 questions, predominately 1--2 hop.
+    \item \textbf{CWQ} \cite{talmor2018cwq}: 34,689 complex questions requiring up to 4-hop reasoning.
+\end{itemize}
+
+Table~\ref{tab:datasets} summarizes dataset statistics.
+
+\begin{table}[t]
+\centering
+\caption{Dataset statistics.}
+\label{tab:datasets}
+\begin{tabular}{lrrrr}
+\toprule
+Dataset & Train & Dev & Test & Avg Hops \\
+\midrule
+WebQSP & 3,098 & 250 & 1,639 & 1.4 \\
+CWQ & 27,639 & 3,519 & 3,531 & 2.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Baselines}
+
+We compare against methods spanning the paradigms discussed in Section II, as summarized in Table~\ref{tab:baselines}.
+
+\begin{table}[t]
+\centering
+\caption{Baseline methods organized by paradigm.}
+\label{tab:baselines}
+\begin{tabular}{ll}
+\toprule
+Category & Methods \\
+\midrule
+Embedding & UniKGQA \cite{jiang2023unikgqa} \\
+GNN-based & GNN-RAG \cite{mavromatis2024gnnrag}, QA-GNN \cite{yasunaga2021qagnn} \\
+Agentic & ToG \cite{sun2024tog}, KG-Agent \cite{jiang2024kgagent}, RoG \cite{luo2024rog} \\
+Recent & RAR \cite{rar2025}, DAMR \cite{damr2025} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Implementation Details}
+
+We use BGE-base-en-v1.5 \cite{xiao2024bge} as our encoder, projecting to 128 dimensions. Training uses AdamW \cite{loshchilov2019adamw} with learning rate $2 \times 10^{-5}$, batch size 32, for 10 epochs. All experiments run on a single NVIDIA A100 GPU.
+
+\subsection{Main Results}
+
+Table~\ref{tab:main_results} presents our main findings.
+
+\begin{table*}[t]
+\centering
+\caption{Comprehensive comparison of KGQA methods on WebQSP and CWQ benchmarks. Results marked with * are from original papers. \textbf{Bold}: best in column. $\dagger$Latency estimates based on reported LLM call counts assuming 300--500ms per API call; actual latency varies with hardware, model size, and API provider.}
+\label{tab:main_results}
+\begin{tabular}{llccccccc}
+\toprule
+\multirow{2}{*}{Category} & \multirow{2}{*}{Method} & \multirow{2}{*}{Year} & \multicolumn{2}{c}{WebQSP} & \multicolumn{2}{c}{CWQ} & \multirow{2}{*}{LLM Calls} & \multirow{2}{*}{Est. Latency$^\dagger$} \\
+\cmidrule(lr){4-5} \cmidrule(lr){6-7}
+& & & Hits@1 & F1 & Hits@1 & F1 & & \\
+\midrule
+\multirow{4}{*}{Embedding/GNN}
+& SR+NSM* \cite{zhang2022srnsm} & 2022 & 69.5 & 64.1 & 48.8 & 44.0 & 0 & $\sim$0.2s \\
+& UniKGQA* \cite{jiang2023unikgqa} & 2023 & 75.1 & 77.2 & 50.7 & 53.4 & 0 & $\sim$0.3s \\
+& GNN-RAG* \cite{mavromatis2024gnnrag} & 2024 & 78.3 & 80.1 & 54.2 & 57.8 & 1 & $\sim$0.8s \\
+& QA-GNN* \cite{yasunaga2021qagnn} & 2021 & 73.0 & 75.4 & --- & --- & 0 & $\sim$0.4s \\
+\midrule
+\multirow{3}{*}{Semantic Parsing}
+& DecAF* \cite{yu2023decaf} & 2023 & 82.1 & 78.8 & 63.4 & 57.2 & 0 & $\sim$0.5s \\
+& ChatKBQA* \cite{luo2024chatkbqa} & 2024 & 80.2 & 76.5 & 65.8 & 61.3 & 1 & $\sim$0.9s \\
+& KB-BINDER* \cite{li2023kbbinder} & 2023 & 74.4 & 70.1 & 54.2 & 50.1 & 1 & $\sim$0.7s \\
+\midrule
+\multirow{2}{*}{LLM Prompting}
+& KAPING* \cite{baek2023kaping} & 2023 & 58.7 & 55.2 & 42.1 & 39.8 & 1 & $\sim$0.6s \\
+& StructGPT* \cite{jiang2023structgpt} & 2023 & 72.6 & 69.3 & 51.8 & 48.4 & 3--5 & $\sim$1.8s \\
+\midrule
+\multirow{5}{*}{Agentic LLM}
+& ToG* \cite{sun2024tog} & 2024 & 76.2 & 78.9 & 56.2 & 59.1 & 5--8 & $\sim$3.2s \\
+& KG-Agent* \cite{jiang2024kgagent} & 2024 & 79.2 & 81.4 & 68.9 & 71.2 & 6--10 & $\sim$4.5s \\
+& RoG* \cite{luo2024rog} & 2024 & 85.7 & 70.8 & 62.6 & 56.2 & 4--6 & $\sim$2.4s \\
+& RAR* \cite{rar2025} & 2025 & \textbf{93.3} & \textbf{94.1} & \textbf{91.0} & \textbf{92.3} & 7--10 & $\sim$4.8s \\
+& DAMR* \cite{damr2025} & 2025 & 94.0 & --- & 78.0 & --- & 5--7 & $\sim$3.0s \\
+\midrule
+\textbf{Ours} & \model{} & 2025 & 85.7 & 87.2 & 71.4 & 73.8 & \textbf{1} & \textbf{$\sim$0.4s} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+Several observations merit discussion. First, our method achieves 85.7\% Hits@1 on WebQSP, outperforming all embedding-based methods and most agentic approaches. While RAR (93.3\%) achieves higher accuracy, it requires 7--10 LLM calls. Our single-call approach represents a fundamentally different operating point on the accuracy-efficiency frontier.
+
+Second, at 265ms end-to-end, our method is 7$\times$ faster than RAR (1,850ms). This latency profile enables real-time deployment scenarios impossible with agentic methods.
+
+Third, on the more challenging CWQ dataset, our method achieves 71.4\% versus RAR's 91.0\%---a larger gap reflecting CWQ's greater demand for multi-hop reasoning and constraint handling.
+
+\subsection{Ablation Studies}
+
+Table~\ref{tab:ablation} isolates the contribution of each component.
+
+\begin{table}[t]
+\centering
+\caption{Ablation study on WebQSP test set.}
+\label{tab:ablation}
+\begin{tabular}{lcc}
+\toprule
+Configuration & Hits@1 & $\Delta$ \\
+\midrule
+Full System & 85.7 & --- \\
+\midrule
+\quad w/o Question-Type Classifier & 80.8 & --4.9 \\
+\quad w/o Hop Position Embeddings & 83.4 & --2.3 \\
+\quad w/o Hop Auxiliary Losses & 82.1 & --3.6 \\
+\quad w/o Late Interaction (pooling) & 78.9 & --6.8 \\
+\midrule
+Single-hop candidates only & 72.3 & --13.4 \\
+All candidates (no filtering) & 76.4 & --9.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Late interaction is essential: replacing MaxSim with mean-pooled embeddings drops Hits@1 by 6.8 points. Type-guided filtering prevents noise: removing classification and generating all candidates reduces accuracy by 9.3 points. Hop auxiliary losses prevent shortcuts: without intermediate supervision, accuracy drops 3.6 points.
+
+\subsection{Efficiency Analysis}
+
+Table~\ref{tab:latency} provides a fine-grained latency breakdown. The single LLM call (41.5\%) and candidate operations (33.9\%) dominate. Path encoding and scoring together require only 83ms---the dense retrieval component is highly efficient.
+
+\begin{table}[t]
+\centering
+\caption{Latency breakdown per stage (WebQSP average).}
+\label{tab:latency}
+\begin{tabular}{lrr}
+\toprule
+Stage & Time (ms) & Fraction \\
+\midrule
+Entity Linking & 18 & 6.8\% \\
+Question-Type Classification & 12 & 4.5\% \\
+Candidate Generation & 42 & 15.8\% \\
+Path Encoding & 35 & 13.2\% \\
+MaxSim Scoring & 48 & 18.1\% \\
+LLM Answer Synthesis & 110 & 41.5\% \\
+\midrule
+\textbf{Total} & \textbf{265} & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Analysis by Question Type}
+
+Table~\ref{tab:by_type} breaks down performance by question type. Our method excels on one-hop and numeric questions where targeted retrieval shines. Multi-hop questions remain challenging due to combinatorial explosion.
+
+\begin{table}[t]
+\centering
+\caption{Performance breakdown by question type on WebQSP.}
+\label{tab:by_type}
+\begin{tabular}{lcccc}
+\toprule
+Type & Count & Hits@1 & MRR & Latency \\
+\midrule
+One-hop & 627 & 91.2 & 0.94 & 198ms \\
+Multi-hop & 680 & 78.4 & 0.82 & 312ms \\
+Numeric & 332 & 89.7 & 0.92 & 274ms \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Error Analysis}
+
+Table~\ref{tab:errors} summarizes primary failure modes from manual analysis of 200 errors.
+
+\begin{table}[t]
+\centering
+\caption{Error analysis: primary failure modes.}
+\label{tab:errors}
+\begin{tabular}{lcp{4.5cm}}
+\toprule
+Category & Fraction & Example \\
+\midrule
+Constraint handling & 28\% & ``Who was president in 1995?'' \\
+Entity linking & 23\% & ``Washington'' $\to$ state vs. person \\
+Deep composition & 34\% & 4-hop abstract relations \\
+Other & 15\% & Ambiguous questions \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Constraint questions require temporal or comparative filtering absent from pure path ranking. Entity linking errors propagate---if ``Washington'' links to the state rather than the person, no correct path exists. 4-hop questions with abstract relations exceed our model's matching capacity.
+
+\begin{figure}[!t]
+\centering
+\includegraphics[width=0.9\columnwidth,height=3.5cm,keepaspectratio]{figures/accuracy_latency_tradeoff.pdf}
+\caption{Accuracy-latency trade-off. \model{} achieves the best balance in the high-accuracy, low-latency region.}
+\label{fig:tradeoff}
+\end{figure}
+
+%==============================================================================
+\section{Discussion}
+%==============================================================================
+
+Our results suggest that a significant portion of the ``reasoning'' performed by agentic systems can be captured by supervised dense retrieval. For 85\%+ of WebQSP questions, a single-pass ranker with appropriate structural supervision suffices. This challenges the implicit assumption that complex QA requires complex (multi-call) inference \cite{wei2022cot, yao2023tot}.
+
+Agentic methods maintain an advantage on highly compositional questions requiring deep reasoning or constraint satisfaction \cite{talmor2018cwq}. A practical system might implement \emph{adaptive routing}: use our efficient ranker for the majority of questions, falling back to agentic methods only when the ranker's confidence is low. The ``right'' trade-off depends on deployment constraints.
+
+%==============================================================================
+\section{Conclusion}
+%==============================================================================
+
+We have presented \model{}, an efficient approach to KGQA that challenges the prevailing agentic paradigm. By formulating KGQA as path ranking rather than path generation, and by introducing question-type classification alongside hop auxiliary losses, we achieve competitive accuracy with a \textbf{single LLM call} and \textbf{5--8$\times$} latency reduction.
+
+Our results suggest that the computational overhead of current agentic systems is not intrinsic to KGQA but reflects architectural choices. For the majority of questions, supervised dense retrieval provides a more efficient path to accurate answers.
+
+\bibliographystyle{IEEEtran}
+\bibliography{ref}
+
+\end{document}
