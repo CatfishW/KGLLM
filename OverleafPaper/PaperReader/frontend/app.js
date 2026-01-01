@@ -46,6 +46,9 @@ const infoSize = document.getElementById('info-size');
  */
 async function init() {
     setupEventListeners();
+    if (searchInput) {
+        searchInput.value = '';
+    }
     setupMobileInteractions();
     AuthController.init();
     ProjectManager.init();
