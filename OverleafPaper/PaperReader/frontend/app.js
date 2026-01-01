@@ -4079,6 +4079,7 @@ const EditorController = {
  */
 const TeamChatController = {
     isOpen: false,
+    fabPosition: null,
     messages: [],
     channel: null,
     channelName: null,
@@ -4106,7 +4107,11 @@ const TeamChatController = {
         if (!this.elements.fab || !this.elements.panel) return;
         this.bindEvents();
         this.setProject(ProjectManager.activeProject);
+        this.loadFabPosition();
+        this.applyFabPosition();
+        this.makeDraggable();
         window.addEventListener('resize', () => {
+            this.clampFabPosition();
             if (this.isOpen) this.positionPanel();
         });
     },
@@ -4127,7 +4132,6 @@ const TeamChatController = {
     },
 
     bindEvents() {
-        this.elements.fab?.addEventListener('click', () => this.toggle());
         this.elements.close?.addEventListener('click', () => this.close());
         this.elements.backdrop?.addEventListener('click', () => this.close());
         this.elements.send?.addEventListener('click', () => this.sendMessage());
@@ -4138,6 +4142,127 @@ const TeamChatController = {
             }
         });
         this.elements.usersBtn?.addEventListener('click', () => this.toggleUsersPanel());
+    },
+
+    makeDraggable() {
+        const fab = this.elements.fab;
+        if (!fab) return;
+
+        let isMouseDown = false;
+        let isDragging = false;
+        let startX, startY, startLeft, startBottom;
+        let totalDelta = 0;
+
+        const promoteToDragThreshold = 10;
+        const tapThreshold = 14;
+
+        const onStart = (e) => {
+            isMouseDown = true;
+            isDragging = false;
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            startX = clientX;
+            startY = clientY;
+
+            const rect = fab.getBoundingClientRect();
+            startLeft = rect.left;
+            startBottom = window.innerHeight - rect.bottom;
+
+            fab.style.transition = 'none';
+            fab.style.cursor = 'pointer';
+        };
+
+        const onMove = (e) => {
+            if (!isMouseDown) return;
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+            const deltaX = clientX - startX;
+            const deltaY = clientY - startY;
+
+            totalDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+
+            if (!isDragging && (Math.abs(deltaX) > promoteToDragThreshold || Math.abs(deltaY) > promoteToDragThreshold)) {
+                isDragging = true;
+                fab.style.cursor = 'grabbing';
+            }
+
+            if (!isDragging) return;
+
+            const rect = fab.getBoundingClientRect();
+            const newLeft = startLeft + deltaX;
+            const newBottom = startBottom - deltaY;
+            const maxLeft = window.innerWidth - rect.width - 10;
+            const maxBottom = window.innerHeight - rect.height - 10;
+
+            const clampedLeft = Math.max(10, Math.min(newLeft, maxLeft));
+            const clampedBottom = Math.max(10, Math.min(newBottom, maxBottom));
+
+            fab.style.left = `${clampedLeft}px`;
+            fab.style.right = 'auto';
+            fab.style.bottom = `${clampedBottom}px`;
+
+            this.fabPosition = { left: clampedLeft, bottom: clampedBottom };
+        };
+
+        const onEnd = () => {
+            if (!isMouseDown) return;
+            fab.style.transition = '';
+            fab.style.cursor = 'pointer';
+
+            if (!isDragging && totalDelta < tapThreshold) {
+                this.toggle();
+            } else if (this.fabPosition) {
+                this.saveFabPosition();
+            }
+
+            isMouseDown = false;
+            isDragging = false;
+            totalDelta = 0;
+        };
+
+        fab.addEventListener('mousedown', onStart);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+
+        fab.addEventListener('touchstart', onStart, { passive: true });
+        document.addEventListener('touchmove', onMove, { passive: true });
+        document.addEventListener('touchend', onEnd);
+    },
+
+    loadFabPosition() {
+        try {
+            const saved = localStorage.getItem('paperreader_teamchat_fab_pos');
+            this.fabPosition = saved ? JSON.parse(saved) : null;
+        } catch (e) {
+            this.fabPosition = null;
+        }
+    },
+
+    saveFabPosition() {
+        if (!this.fabPosition) return;
+        try {
+            localStorage.setItem('paperreader_teamchat_fab_pos', JSON.stringify(this.fabPosition));
+        } catch (e) {
+            console.warn('Failed to save chat button position');
+        }
+    },
+
+    applyFabPosition() {
+        if (!this.elements.fab || !this.fabPosition) return;
+        this.elements.fab.style.left = `${this.fabPosition.left}px`;
+        this.elements.fab.style.right = 'auto';
+        this.elements.fab.style.bottom = `${this.fabPosition.bottom}px`;
+    },
+
+    clampFabPosition() {
+        if (!this.elements.fab || !this.fabPosition) return;
+        const rect = this.elements.fab.getBoundingClientRect();
+        const maxLeft = window.innerWidth - rect.width - 10;
+        const maxBottom = window.innerHeight - rect.height - 10;
+        const clampedLeft = Math.max(10, Math.min(this.fabPosition.left, maxLeft));
+        const clampedBottom = Math.max(10, Math.min(this.fabPosition.bottom, maxBottom));
+        this.fabPosition = { left: clampedLeft, bottom: clampedBottom };
+        this.applyFabPosition();
     },
 
     toggle() {
