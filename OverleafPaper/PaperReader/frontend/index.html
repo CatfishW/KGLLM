@@ -121,9 +121,50 @@
             <div class="editor-container">
                 <!-- Sidebar -->
                 <div class="editor-sidebar">
-                    <div class="editor-section-title">PROJECT FILES</div>
-                    <div class="file-list" id="file-list">
-                        <!-- Files populated here -->
+                    <div class="sidebar-tabs">
+                        <button class="sidebar-tab active" id="sidebar-tab-files">FILES</button>
+                        <button class="sidebar-tab" id="sidebar-tab-outline">OUTLINE</button>
+                        <button class="sidebar-tab" id="sidebar-tab-comments">COMMENTS</button>
+                    </div>
+                    <div class="sidebar-panel active" id="sidebar-panel-files">
+                        <div class="editor-section-title">PROJECT FILES</div>
+                        <div class="file-actions">
+                            <button class="btn-tool btn-small" id="btn-new-file" title="Create new file">
+                                <i class="bi bi-file-earmark-plus"></i> NEW
+                            </button>
+                            <button class="btn-tool btn-small" id="btn-rename-file" title="Rename file">
+                                <i class="bi bi-pencil-square"></i> RENAME
+                            </button>
+                            <button class="btn-tool btn-small" id="btn-duplicate-file" title="Duplicate file">
+                                <i class="bi bi-files"></i> DUPLICATE
+                            </button>
+                        </div>
+                        <div class="file-search">
+                            <i class="bi bi-search"></i>
+                            <input type="text" id="file-search-input" placeholder="Filter files...">
+                        </div>
+                        <div class="file-list" id="file-list">
+                            <!-- Files populated here -->
+                        </div>
+                    </div>
+                    <div class="sidebar-panel" id="sidebar-panel-outline">
+                        <div class="editor-section-title">DOCUMENT OUTLINE</div>
+                        <div class="outline-list" id="outline-list">
+                            <!-- Outline populated here -->
+                        </div>
+                    </div>
+                    <div class="sidebar-panel" id="sidebar-panel-comments">
+                        <div class="editor-section-title">COMMENTS</div>
+                        <div class="comment-compose">
+                            <div class="comment-context" id="comment-context">Select text to comment</div>
+                            <textarea id="comment-input" placeholder="Leave a comment..." rows="3"></textarea>
+                            <button class="btn-tool btn-primary" id="btn-add-comment">
+                                <i class="bi bi-chat-square-dots"></i> ADD COMMENT
+                            </button>
+                        </div>
+                        <div class="comment-list" id="comment-list">
+                            <!-- Comments populated here -->
+                        </div>
                     </div>
                 </div>
 
@@ -144,6 +185,16 @@
                             <button class="btn-tool" id="btn-history" title="View Edit History">
                                 <i class="bi bi-clock-history"></i>
                             </button>
+                            <button class="btn-tool" id="btn-auto-save" title="Toggle auto save">
+                                <i class="bi bi-cloud-check"></i>
+                            </button>
+                            <button class="btn-tool" id="btn-auto-compile" title="Toggle auto compile">
+                                <i class="bi bi-lightning-charge"></i>
+                            </button>
+                            <button class="btn-tool" id="btn-share" title="Copy share link">
+                                <i class="bi bi-share"></i>
+                            </button>
+                            <span class="editor-stats" id="editor-stats">WORDS 0 • LINES 0 • CHARS 0</span>
                             <div class="mobile-editor-tabs">
                                 <button class="btn-mobile-tab active" id="btn-show-source">SOURCE</button>
                                 <button class="btn-mobile-tab" id="btn-show-preview">PREVIEW</button>
@@ -201,6 +252,9 @@
                                     <button class="btn-tool" id="btn-find-pdf" title="Find in PDF (Ctrl+Shift+F)">
                                         <i class="bi bi-search"></i>
                                     </button>
+                                    <button class="btn-tool" id="btn-sync-pdf" title="Sync source to PDF">
+                                        <i class="bi bi-arrow-left-right"></i>
+                                    </button>
                                     <button class="btn-tool" id="btn-zoom-out" title="Zoom Out">
                                         <i class="bi bi-zoom-out"></i>
                                     </button>
@@ -215,6 +269,9 @@
                                         title="Download compiled PDF (Ctrl+Shift+D)" disabled>
                                         <i class="bi bi-download"></i>
                                         <span class="btn-text">PDF</span>
+                                    </button>
+                                    <button class="btn-tool" id="btn-logs" title="Show compile log">
+                                        <i class="bi bi-terminal"></i>
                                     </button>
                                     <span id="page-count-display" class="page-count">Page 1 of 1</span>
                                 </div>
@@ -242,6 +299,29 @@
                             <div id="pdf-viewer-container">
                                 <!-- PDF.js viewer will render here -->
                             </div>
+                            <div class="compile-log-panel" id="compile-log-panel" style="display: none;">
+                                <div class="compile-log-header">
+                                    <div class="compile-log-title">
+                                        <i class="bi bi-terminal"></i>
+                                        <span>Compilation Log</span>
+                                    </div>
+                                    <div class="compile-log-actions">
+                                        <select id="compile-log-filter" class="compile-log-filter">
+                                            <option value="all">All</option>
+                                            <option value="errors">Errors</option>
+                                            <option value="warnings">Warnings</option>
+                                        </select>
+                                        <button class="btn-tool btn-small" id="compile-log-copy">
+                                            <i class="bi bi-clipboard"></i> COPY
+                                        </button>
+                                        <button class="btn-tool btn-small" id="compile-log-close">
+                                            <i class="bi bi-x"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="compile-log-meta" id="compile-log-meta">No log loaded</div>
+                                <pre class="compile-log-content" id="compile-log-content"></pre>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -255,12 +335,46 @@
         <div class="history-content">
             <div class="history-header">
                 <h3><i class="bi bi-clock-history"></i> Edit History</h3>
+                <div class="history-tabs">
+                    <button class="history-tab active" id="history-tab-activity">ACTIVITY</button>
+                    <button class="history-tab" id="history-tab-versions">VERSIONS</button>
+                </div>
                 <button class="btn-find-close" id="history-close">
                     <i class="bi bi-x"></i>
                 </button>
             </div>
-            <div class="history-body" id="history-list">
-                <!-- History entries populated here -->
+            <div class="history-body">
+                <div class="history-panel active" id="history-panel-activity">
+                    <div class="history-list" id="history-list">
+                        <!-- History entries populated here -->
+                    </div>
+                </div>
+                <div class="history-panel" id="history-panel-versions">
+                    <div class="history-toolbar">
+                        <label for="history-file-select">FILE</label>
+                        <select id="history-file-select"></select>
+                        <button class="btn-tool btn-small" id="history-refresh">
+                            <i class="bi bi-arrow-clockwise"></i>
+                        </button>
+                    </div>
+                    <div class="history-version-grid">
+                        <div class="history-version-list" id="history-version-list"></div>
+                        <div class="history-version-preview">
+                            <div class="history-preview-header">
+                                <span id="history-preview-title">Select a version to preview</span>
+                                <div class="history-preview-actions">
+                                    <button class="btn-tool btn-small" id="history-restore-version">
+                                        <i class="bi bi-arrow-counterclockwise"></i> RESTORE
+                                    </button>
+                                    <button class="btn-tool btn-small" id="history-copy-version">
+                                        <i class="bi bi-clipboard"></i> COPY
+                                    </button>
+                                </div>
+                            </div>
+                            <pre class="history-preview-content" id="history-preview-content"></pre>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>

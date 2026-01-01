@@ -879,7 +879,27 @@ const EditorController = {
         pdfScale: 1.2,
         editHistory: [],
         findMatches: [],
-        currentFindIndex: -1
+        currentFindIndex: -1,
+        fileFilter: '',
+        fileContents: {},
+        dirtyFiles: {},
+        autoSaveEnabled: false,
+        autoCompileEnabled: false,
+        autoSaveTimer: null,
+        lastAutoSaveAt: 0,
+        outlineItems: [],
+        outlineTimer: null,
+        comments: [],
+        commentSelection: null,
+        versionHistory: [],
+        versionThrottle: {},
+        selectedVersionId: null,
+        historyFileSelected: null,
+        lastCompileLog: '',
+        lastCompileSummary: { errors: 0, warnings: 0 },
+        lastCompileAt: 0,
+        currentPreviewPage: 1,
+        pdfScrollHandler: null
     },
 
     elements: {
@@ -902,8 +922,14 @@ const EditorController = {
         btnFindTex: document.getElementById('btn-find-tex'),
         btnFindPdf: document.getElementById('btn-find-pdf'),
         btnHistory: document.getElementById('btn-history'),
+        btnAutoSave: document.getElementById('btn-auto-save'),
+        btnAutoCompile: document.getElementById('btn-auto-compile'),
+        btnShare: document.getElementById('btn-share'),
+        editorStats: document.getElementById('editor-stats'),
         btnZoomIn: document.getElementById('btn-zoom-in'),
         btnZoomOut: document.getElementById('btn-zoom-out'),
+        btnSyncPdf: document.getElementById('btn-sync-pdf'),
+        btnLogs: document.getElementById('btn-logs'),
         findBar: document.getElementById('find-bar'),
         findInput: document.getElementById('find-input'),
         findCount: document.getElementById('find-count'),
@@ -919,13 +945,48 @@ const EditorController = {
         historyModal: document.getElementById('history-modal'),
         historyList: document.getElementById('history-list'),
         historyClose: document.getElementById('history-close'),
+        historyTabActivity: document.getElementById('history-tab-activity'),
+        historyTabVersions: document.getElementById('history-tab-versions'),
+        historyPanelActivity: document.getElementById('history-panel-activity'),
+        historyPanelVersions: document.getElementById('history-panel-versions'),
+        historyFileSelect: document.getElementById('history-file-select'),
+        historyRefresh: document.getElementById('history-refresh'),
+        historyVersionList: document.getElementById('history-version-list'),
+        historyPreviewTitle: document.getElementById('history-preview-title'),
+        historyPreviewContent: document.getElementById('history-preview-content'),
+        historyRestoreVersion: document.getElementById('history-restore-version'),
+        historyCopyVersion: document.getElementById('history-copy-version'),
         // Line numbers and resizer
         lineNumbers: document.getElementById('line-numbers'),
         btnLineNumbers: document.getElementById('btn-line-numbers'),
         sourceView: document.getElementById('source-view'),
         previewView: document.getElementById('preview-view'),
         editorSidebar: document.querySelector('.editor-sidebar'),
+        btnToggleSidebar: document.getElementById('btn-toggle-sidebar'),
+        panelResizer: document.getElementById('panel-resizer'),
         btnToggleCitationHighlights: document.getElementById('btn-toggle-citation-highlights'),
+        pageCountDisplay: document.getElementById('page-count-display'),
+        compileLogPanel: document.getElementById('compile-log-panel'),
+        compileLogFilter: document.getElementById('compile-log-filter'),
+        compileLogContent: document.getElementById('compile-log-content'),
+        compileLogCopy: document.getElementById('compile-log-copy'),
+        compileLogClose: document.getElementById('compile-log-close'),
+        compileLogMeta: document.getElementById('compile-log-meta'),
+        sidebarTabFiles: document.getElementById('sidebar-tab-files'),
+        sidebarTabOutline: document.getElementById('sidebar-tab-outline'),
+        sidebarTabComments: document.getElementById('sidebar-tab-comments'),
+        sidebarPanelFiles: document.getElementById('sidebar-panel-files'),
+        sidebarPanelOutline: document.getElementById('sidebar-panel-outline'),
+        sidebarPanelComments: document.getElementById('sidebar-panel-comments'),
+        btnNewFile: document.getElementById('btn-new-file'),
+        btnRenameFile: document.getElementById('btn-rename-file'),
+        btnDuplicateFile: document.getElementById('btn-duplicate-file'),
+        fileSearchInput: document.getElementById('file-search-input'),
+        outlineList: document.getElementById('outline-list'),
+        commentContext: document.getElementById('comment-context'),
+        commentInput: document.getElementById('comment-input'),
+        btnAddComment: document.getElementById('btn-add-comment'),
+        commentList: document.getElementById('comment-list'),
         // Mobile tabs
         btnShowSource: document.getElementById('btn-show-source'),
         btnShowPreview: document.getElementById('btn-show-preview'),
@@ -945,6 +1006,20 @@ const EditorController = {
         this.elements.btnUpload.addEventListener('click', () => this.elements.fileUploadInput.click());
         this.elements.fileUploadInput.addEventListener('change', (e) => this.handleUpload(e));
         this.elements.btnDelete.addEventListener('click', () => this.deleteCurrent());
+
+        // Sidebar tabs
+        this.elements.sidebarTabFiles?.addEventListener('click', () => this.switchSidebarTab('files'));
+        this.elements.sidebarTabOutline?.addEventListener('click', () => this.switchSidebarTab('outline'));
+        this.elements.sidebarTabComments?.addEventListener('click', () => this.switchSidebarTab('comments'));
+
+        // File actions
+        this.elements.btnNewFile?.addEventListener('click', () => this.createNewFile());
+        this.elements.btnRenameFile?.addEventListener('click', () => this.renameCurrentFile());
+        this.elements.btnDuplicateFile?.addEventListener('click', () => this.duplicateCurrentFile());
+        this.elements.fileSearchInput?.addEventListener('input', (e) => {
+            this.state.fileFilter = e.target.value.toLowerCase();
+            this.renderFileList();
+        });
 
         // Default disabled until first successful compile
         this.elements.btnDownloadCompiled.disabled = true;
@@ -967,6 +1042,12 @@ const EditorController = {
         this.elements.btnHistory?.addEventListener('click', () => this.showHistory());
         this.elements.historyClose?.addEventListener('click', () => this.closeHistory());
         this.elements.historyModal?.querySelector('.history-backdrop')?.addEventListener('click', () => this.closeHistory());
+        this.elements.historyTabActivity?.addEventListener('click', () => this.switchHistoryTab('activity'));
+        this.elements.historyTabVersions?.addEventListener('click', () => this.switchHistoryTab('versions'));
+        this.elements.historyFileSelect?.addEventListener('change', () => this.renderVersionHistory());
+        this.elements.historyRefresh?.addEventListener('click', () => this.renderVersionHistory());
+        this.elements.historyRestoreVersion?.addEventListener('click', () => this.restoreSelectedVersion());
+        this.elements.historyCopyVersion?.addEventListener('click', () => this.copySelectedVersion());
 
         // Zoom
         this.elements.btnZoomIn?.addEventListener('click', () => this.zoomIn());
@@ -977,6 +1058,28 @@ const EditorController = {
             this.elements.btnToggleCitationHighlights.classList.toggle('active', isActive);
             showToast(isActive ? 'Citation highlights enabled' : 'Citation highlights disabled');
         });
+
+        // Auto save/compile + share
+        this.elements.btnAutoSave?.addEventListener('click', () => this.toggleAutoSave());
+        this.elements.btnAutoCompile?.addEventListener('click', () => this.toggleAutoCompile());
+        this.elements.btnShare?.addEventListener('click', () => this.copyShareLink());
+
+        // Sync + compile log
+        this.elements.btnSyncPdf?.addEventListener('click', () => this.syncSourceToPdf());
+        this.elements.btnLogs?.addEventListener('click', () => this.toggleCompileLog());
+        this.elements.compileLogClose?.addEventListener('click', () => this.hideCompileLog());
+        this.elements.compileLogCopy?.addEventListener('click', () => this.copyCompileLog());
+        this.elements.compileLogFilter?.addEventListener('change', () => this.renderCompileLog());
+
+        // Comments
+        this.elements.btnAddComment?.addEventListener('click', () => this.addComment());
+        this.elements.commentInput?.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'Enter') {
+                e.preventDefault();
+                this.addComment();
+            }
+        });
+        this.elements.commentList?.addEventListener('click', (e) => this.handleCommentAction(e));
 
         // Line numbers toggle
         this.elements.btnLineNumbers?.addEventListener('click', () => this.toggleLineNumbers());
@@ -1000,9 +1103,16 @@ const EditorController = {
 
         // Update line numbers on editor scroll/input
         this.elements.codeEditor?.addEventListener('scroll', () => this.syncLineNumberScroll());
-        this.elements.codeEditor?.addEventListener('input', () => this.updateLineNumbers());
-        this.elements.codeEditor?.addEventListener('keyup', () => this.updateCurrentLine());
-        this.elements.codeEditor?.addEventListener('click', () => this.updateCurrentLine());
+        this.elements.codeEditor?.addEventListener('input', () => this.handleEditorInput());
+        this.elements.codeEditor?.addEventListener('keyup', () => {
+            this.updateCurrentLine();
+            this.captureCommentSelection();
+        });
+        this.elements.codeEditor?.addEventListener('click', () => {
+            this.updateCurrentLine();
+            this.captureCommentSelection();
+        });
+        this.elements.codeEditor?.addEventListener('mouseup', () => this.captureCommentSelection());
 
         // Editor shortcuts
         document.addEventListener('keydown', (e) => {
@@ -1024,12 +1134,18 @@ const EditorController = {
 
         // Load history from localStorage
         this.loadHistory();
+        this.loadVersionHistory();
+        this.loadComments();
+        this.loadAutoPreferences();
 
         // Load line numbers preference
         this.loadLineNumbersPreference();
 
         // Load citation map
         await this.loadCitationMap();
+
+        this.updateEditorStats();
+        this.updateCommentContext();
     },
 
     async switchTab(tab) {
@@ -1041,6 +1157,11 @@ const EditorController = {
             loadPapers();
             // Show library tools
             document.querySelector('.toolbar').style.display = 'block';
+            this.hideCompileLog();
+            if (this.state.autoSaveTimer) {
+                clearTimeout(this.state.autoSaveTimer);
+                this.state.autoSaveTimer = null;
+            }
         } else {
             this.elements.libraryView.style.display = 'none';
             this.elements.editorView.style.display = 'flex';
@@ -1071,25 +1192,119 @@ const EditorController = {
 
             // If viewing preview, make sure PDF is rendered
             if (this.state.lastCompiledPdfUrl) {
-                this.renderPdf(this.state.lastCompiledPdfUrl);
+                this.loadPDF(this.state.lastCompiledPdfUrl);
             }
+        }
+    },
+
+    switchSidebarTab(tab) {
+        const tabs = {
+            files: this.elements.sidebarTabFiles,
+            outline: this.elements.sidebarTabOutline,
+            comments: this.elements.sidebarTabComments
+        };
+
+        const panels = {
+            files: this.elements.sidebarPanelFiles,
+            outline: this.elements.sidebarPanelOutline,
+            comments: this.elements.sidebarPanelComments
+        };
+
+        Object.keys(tabs).forEach(key => {
+            tabs[key]?.classList.toggle('active', key === tab);
+            panels[key]?.classList.toggle('active', key === tab);
+        });
+    },
+
+    switchHistoryTab(tab) {
+        this.elements.historyTabActivity?.classList.toggle('active', tab === 'activity');
+        this.elements.historyTabVersions?.classList.toggle('active', tab === 'versions');
+        this.elements.historyPanelActivity?.classList.toggle('active', tab === 'activity');
+        this.elements.historyPanelVersions?.classList.toggle('active', tab === 'versions');
+    },
+
+    toggleAutoSave() {
+        this.state.autoSaveEnabled = !this.state.autoSaveEnabled;
+        localStorage.setItem('paperreader_autosave', this.state.autoSaveEnabled ? 'true' : 'false');
+        this.updateAutoButtons();
+        showToast(this.state.autoSaveEnabled ? 'Auto save enabled' : 'Auto save disabled');
+    },
+
+    toggleAutoCompile() {
+        this.state.autoCompileEnabled = !this.state.autoCompileEnabled;
+        localStorage.setItem('paperreader_autocompile', this.state.autoCompileEnabled ? 'true' : 'false');
+        this.updateAutoButtons();
+        showToast(this.state.autoCompileEnabled ? 'Auto compile enabled' : 'Auto compile disabled');
+    },
+
+    loadAutoPreferences() {
+        const autoSave = localStorage.getItem('paperreader_autosave');
+        const autoCompile = localStorage.getItem('paperreader_autocompile');
+        this.state.autoSaveEnabled = autoSave === 'true';
+        this.state.autoCompileEnabled = autoCompile === 'true';
+        this.updateAutoButtons();
+    },
+
+    updateAutoButtons() {
+        this.elements.btnAutoSave?.classList.toggle('active', this.state.autoSaveEnabled);
+        this.elements.btnAutoCompile?.classList.toggle('active', this.state.autoCompileEnabled);
+    },
+
+    copyShareLink() {
+        const url = window.location.href;
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(url).then(() => {
+                showToast('Share link copied');
+            }).catch(() => {
+                prompt('Copy share link:', url);
+            });
+        } else {
+            prompt('Copy share link:', url);
         }
     },
 
     async loadFiles() {
         try {
             const res = await fetch(`${API_BASE}/api/project/files`);
+            if (!res.ok) throw new Error("Failed to load files");
             const data = await res.json();
-            this.state.files = data.files;
+            this.state.files = data.files || [];
             this.renderFileList();
+            this.updateHistoryFileOptions();
+
+            if (this.state.currentFile) {
+                const exists = this.state.files.find(f => f.name === this.state.currentFile);
+                if (!exists) {
+                    this.state.currentFile = null;
+                    this.elements.currentFileName.textContent = "Select a file...";
+                    this.elements.codeEditor.value = "";
+                    this.elements.codeEditor.disabled = true;
+                    this.elements.btnSave.disabled = true;
+                    this.elements.btnDelete.style.display = 'none';
+                    this.state.commentSelection = null;
+                    this.updateCommentContext();
+                    this.renderComments();
+                    this.buildOutlineFromContent('');
+                    this.updateEditorStats();
+                }
+            }
         } catch (e) {
             console.error("Failed to load files", e);
+            showToast("Failed to load files");
         }
     },
 
     renderFileList() {
         this.elements.fileList.innerHTML = '';
-        this.state.files.forEach(file => {
+        const filter = this.state.fileFilter || '';
+        const files = this.state.files.filter(file => file.name.toLowerCase().includes(filter));
+
+        if (files.length === 0) {
+            this.elements.fileList.innerHTML = '<div class="outline-empty">No files match the filter</div>';
+            return;
+        }
+
+        files.forEach(file => {
             const el = document.createElement('div');
             el.className = `file-item ${this.state.currentFile === file.name ? 'active' : ''}`;
 
@@ -1097,15 +1312,40 @@ const EditorController = {
             if (file.type === 'tex') icon = 'bi-file-earmark-code';
             if (file.type === 'bib') icon = 'bi-file-earmark-text';
 
-            el.innerHTML = `<i class="bi ${icon}"></i> ${file.name}`;
+            const dirty = this.state.dirtyFiles[file.name];
+            const size = this.formatFileSize(file.size);
+            el.innerHTML = `
+                <i class="bi ${icon}"></i>
+                <span class="file-name">${escapeHtml(file.name)}</span>
+                <span class="file-meta">
+                    ${dirty ? '<span class="file-dirty">*</span>' : ''}
+                    ${size}
+                </span>
+            `;
+            el.title = file.name;
             el.onclick = () => this.selectFile(file);
             this.elements.fileList.appendChild(el);
         });
     },
 
     async selectFile(file) {
+        if (this.state.autoSaveTimer) {
+            clearTimeout(this.state.autoSaveTimer);
+            this.state.autoSaveTimer = null;
+        }
+        if (this.state.currentFile && this.isDirty(this.state.currentFile)) {
+            const shouldSave = confirm('You have unsaved changes. Save before switching?');
+            if (shouldSave) {
+                const saved = await this.saveCurrent();
+                if (!saved) return;
+            } else {
+                const discard = confirm('Discard unsaved changes?');
+                if (!discard) return;
+            }
+        }
+
         this.state.currentFile = file.name;
-        this.elements.currentFileName.textContent = file.name;
+        this.updateCurrentFileLabel();
         this.renderFileList();
 
         // Enable/Disable controls
@@ -1120,21 +1360,745 @@ const EditorController = {
             if (!res.ok) throw new Error("Failed to load content");
             const data = await res.json();
             this.elements.codeEditor.value = data.content;
+            this.state.fileContents[file.name] = data.content;
+            this.state.dirtyFiles[file.name] = false;
+            this.state.commentSelection = null;
+            this.updateCommentContext();
+            this.updateCurrentFileLabel();
 
             // Update line numbers after content loads
             this.updateLineNumbers();
+            this.updateCurrentLine();
+            this.updateEditorStats();
+            this.buildOutlineFromContent(data.content);
+            this.renderComments();
         } catch (e) {
             console.error(e);
             this.elements.codeEditor.value = "// Error loading content or binary file";
             this.updateLineNumbers();
+            this.updateEditorStats();
         }
     },
 
-    async saveCurrent() {
+    handleEditorInput() {
+        this.updateLineNumbers();
+        this.updateCurrentLine();
+        this.updateEditorStats();
+        this.updateDirtyState();
+        this.scheduleOutlineUpdate();
+        this.scheduleAutoSave();
+    },
+
+    updateDirtyState() {
+        if (!this.state.currentFile) return;
+        const content = this.elements.codeEditor.value;
+        const savedContent = this.state.fileContents[this.state.currentFile] ?? '';
+        const isDirty = content !== savedContent;
+        this.state.dirtyFiles[this.state.currentFile] = isDirty;
+        this.updateCurrentFileLabel();
+        this.renderFileList();
+    },
+
+    isDirty(filename) {
+        return !!this.state.dirtyFiles[filename];
+    },
+
+    updateCurrentFileLabel() {
+        if (!this.state.currentFile || !this.elements.currentFileName) return;
+        const dirty = this.isDirty(this.state.currentFile) ? ' *' : '';
+        this.elements.currentFileName.textContent = `${this.state.currentFile}${dirty}`;
+    },
+
+    updateEditorStats() {
+        const statsEl = this.elements.editorStats;
+        const editor = this.elements.codeEditor;
+        if (!statsEl || !editor || editor.disabled) {
+            if (statsEl) statsEl.textContent = 'WORDS 0 | LINES 0 | CHARS 0';
+            return;
+        }
+
+        const content = editor.value || '';
+        const lines = content.length ? content.split('\n').length : 0;
+        const words = content.trim() ? content.trim().split(/\s+/).length : 0;
+        const chars = content.length;
+        statsEl.textContent = `WORDS ${words} | LINES ${lines} | CHARS ${chars}`;
+    },
+
+    formatFileSize(bytes) {
+        if (bytes === undefined || bytes === null) return '';
+        if (bytes < 1024) return `${bytes} B`;
+        const kb = bytes / 1024;
+        if (kb < 1024) return `${kb.toFixed(1)} KB`;
+        const mb = kb / 1024;
+        return `${mb.toFixed(2)} MB`;
+    },
+
+    sanitizeFilename(name) {
+        const trimmed = (name || '').trim();
+        if (!trimmed) return null;
+        if (trimmed.includes('..') || trimmed.includes('/') || trimmed.includes('\\')) return null;
+        return trimmed;
+    },
+
+    async createNewFile() {
+        let name = prompt('Enter new filename (e.g. section.tex):');
+        name = this.sanitizeFilename(name);
+        if (!name) return;
+
+        if (!name.includes('.')) {
+            const addExt = confirm('No extension detected. Add .tex?');
+            if (addExt) name += '.tex';
+        }
+
+        if (this.state.files.find(f => f.name === name)) {
+            alert('A file with that name already exists.');
+            return;
+        }
+
+        const ok = await this.saveFileContent(name, '');
+        if (ok) {
+            this.saveToHistory('Created file', name);
+            this.state.fileFilter = '';
+            if (this.elements.fileSearchInput) {
+                this.elements.fileSearchInput.value = '';
+            }
+            await this.loadFiles();
+            const file = this.state.files.find(f => f.name === name);
+            if (file) this.selectFile(file);
+        }
+    },
+
+    async renameCurrentFile() {
         if (!this.state.currentFile) return;
 
+        const oldName = this.state.currentFile;
+        let name = prompt('Rename file:', oldName);
+        name = this.sanitizeFilename(name);
+        if (!name || name === oldName) return;
+
+        if (this.state.files.find(f => f.name === name)) {
+            alert('A file with that name already exists.');
+            return;
+        }
+
+        const content = this.elements.codeEditor.value || '';
+        const ok = await this.saveFileContent(name, content);
+        if (!ok) return;
+
+        try {
+            await fetch(`${API_BASE}/api/project/file/${oldName}`, { method: 'DELETE' });
+        } catch (e) {
+            console.warn('Failed to delete old file after rename', e);
+        }
+
+        this.state.currentFile = name;
+        this.state.fileContents[name] = content;
+        this.state.dirtyFiles[name] = false;
+        delete this.state.fileContents[oldName];
+        delete this.state.dirtyFiles[oldName];
+        this.state.fileFilter = '';
+        if (this.elements.fileSearchInput) {
+            this.elements.fileSearchInput.value = '';
+        }
+
+        this.state.comments = this.state.comments.map(comment => {
+            if (comment.filename === oldName) {
+                return { ...comment, filename: name };
+            }
+            return comment;
+        });
+        this.saveComments();
+
+        this.state.versionHistory = this.state.versionHistory.map(entry => {
+            if (entry.filename === oldName) {
+                return { ...entry, filename: name };
+            }
+            return entry;
+        });
+        try {
+            localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+        } catch (e) {
+            console.warn('Failed to update version history for rename');
+        }
+
+        await this.loadFiles();
+        this.updateCurrentFileLabel();
+        this.renderComments();
+        this.saveToHistory(`Renamed ${oldName}`, name);
+        showToast('File renamed');
+    },
+
+    async duplicateCurrentFile() {
+        if (!this.state.currentFile) return;
+        const base = this.state.currentFile.replace(/(\.[^.]*)$/, '');
+        const ext = this.state.currentFile.includes('.') ? this.state.currentFile.split('.').pop() : '';
+        const suggested = ext ? `${base}_copy.${ext}` : `${base}_copy`;
+        let name = prompt('Duplicate file as:', suggested);
+        name = this.sanitizeFilename(name);
+        if (!name) return;
+
+        if (this.state.files.find(f => f.name === name)) {
+            alert('A file with that name already exists.');
+            return;
+        }
+
+        const content = this.elements.codeEditor.value || '';
+        const ok = await this.saveFileContent(name, content);
+        if (ok) {
+            this.saveToHistory('Duplicated file', name);
+            await this.loadFiles();
+            showToast('File duplicated');
+        }
+    },
+
+    async saveFileContent(filename, content) {
+        try {
+            const res = await fetch(`${API_BASE}/api/project/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename, content })
+            });
+            if (!res.ok) throw new Error('Save failed');
+            this.saveVersionSnapshot(filename, content, 'manual');
+            return true;
+        } catch (e) {
+            console.error('Save failed', e);
+            alert('Failed to save file');
+            return false;
+        }
+    },
+
+    scheduleOutlineUpdate() {
+        if (this.state.outlineTimer) {
+            clearTimeout(this.state.outlineTimer);
+        }
+
+        this.state.outlineTimer = setTimeout(() => {
+            const content = this.elements.codeEditor.value || '';
+            this.buildOutlineFromContent(content);
+        }, 300);
+    },
+
+    buildOutlineFromContent(content) {
+        if (!this.elements.outlineList) return;
+        if (!this.state.currentFile || !this.state.currentFile.endsWith('.tex')) {
+            this.state.outlineItems = [];
+            this.renderOutline();
+            return;
+        }
+
+        const lines = content.split('\n');
+        const items = [];
+        const pattern = /\\(chapter|section|subsection|subsubsection|paragraph|subparagraph)\*?(?:\[[^\]]*\])?\{([^}]+)\}/;
+
+        lines.forEach((line, index) => {
+            const match = line.match(pattern);
+            if (!match) return;
+            const levelMap = {
+                chapter: 1,
+                section: 1,
+                subsection: 2,
+                subsubsection: 3,
+                paragraph: 4,
+                subparagraph: 5
+            };
+            items.push({
+                title: match[2],
+                line: index + 1,
+                level: levelMap[match[1]] || 1
+            });
+        });
+
+        this.state.outlineItems = items;
+        this.renderOutline();
+    },
+
+    renderOutline() {
+        const container = this.elements.outlineList;
+        if (!container) return;
+
+        if (!this.state.currentFile || this.state.outlineItems.length === 0) {
+            container.innerHTML = '<div class="outline-empty">No outline items</div>';
+            return;
+        }
+
+        container.innerHTML = this.state.outlineItems.map(item => `
+            <div class="outline-item level-${item.level}" data-line="${item.line}">
+                <i class="bi bi-chevron-right"></i>
+                <span>${escapeHtml(item.title)}</span>
+            </div>
+        `).join('');
+
+        container.querySelectorAll('.outline-item').forEach(el => {
+            el.addEventListener('click', () => {
+                const line = parseInt(el.dataset.line, 10);
+                if (line) this.gotoLine(line);
+            });
+        });
+    },
+
+    loadComments() {
+        try {
+            const saved = localStorage.getItem('paperreader_comments');
+            this.state.comments = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            this.state.comments = [];
+        }
+        this.renderComments();
+    },
+
+    saveComments() {
+        try {
+            localStorage.setItem('paperreader_comments', JSON.stringify(this.state.comments));
+        } catch (e) {
+            console.warn('Failed to save comments');
+        }
+    },
+
+    captureCommentSelection() {
+        const editor = this.elements.codeEditor;
+        if (!editor || editor.disabled || !this.state.currentFile) return;
+
+        const start = editor.selectionStart;
+        const end = editor.selectionEnd;
+        if (start === end) {
+            this.state.commentSelection = null;
+            this.updateCommentContext();
+            return;
+        }
+
+        const fullText = editor.value || '';
+        const text = fullText.slice(start, end).trim();
+        if (!text) return;
+
+        const startLine = fullText.slice(0, start).split('\n').length;
+        const endLine = fullText.slice(0, end).split('\n').length;
+        this.state.commentSelection = { text, startLine, endLine };
+        this.updateCommentContext();
+    },
+
+    updateCommentContext() {
+        const el = this.elements.commentContext;
+        if (!el) return;
+
+        if (!this.state.commentSelection) {
+            el.textContent = 'Select text to comment';
+            return;
+        }
+
+        const { text, startLine, endLine } = this.state.commentSelection;
+        const preview = text.length > 80 ? `${text.slice(0, 80)}...` : text;
+        el.textContent = `Lines ${startLine}-${endLine}: ${preview}`;
+    },
+
+    addComment() {
+        if (!this.state.currentFile) return;
+
+        const text = (this.elements.commentInput?.value || '').trim();
+        if (!text) {
+            showToast('Comment text is empty');
+            return;
+        }
+
+        if (!this.state.commentSelection) {
+            showToast('Select text to comment');
+            return;
+        }
+
+        const entry = {
+            id: Date.now(),
+            filename: this.state.currentFile,
+            text,
+            excerpt: this.state.commentSelection.text,
+            lineStart: this.state.commentSelection.startLine,
+            lineEnd: this.state.commentSelection.endLine,
+            resolved: false,
+            timestamp: new Date().toISOString()
+        };
+
+        this.state.comments.unshift(entry);
+        this.saveComments();
+        if (this.elements.commentInput) {
+            this.elements.commentInput.value = '';
+        }
+        this.state.commentSelection = null;
+        this.updateCommentContext();
+        this.renderComments();
+        showToast('Comment added');
+    },
+
+    renderComments() {
+        const container = this.elements.commentList;
+        if (!container) return;
+
+        if (!this.state.currentFile) {
+            container.innerHTML = '<div class="outline-empty">Select a file to view comments</div>';
+            return;
+        }
+
+        const comments = this.state.comments.filter(c => c.filename === this.state.currentFile);
+        if (comments.length === 0) {
+            container.innerHTML = '<div class="outline-empty">No comments yet</div>';
+            return;
+        }
+
+        container.innerHTML = comments.map(comment => {
+            const date = new Date(comment.timestamp);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const lineLabel = `Lines ${comment.lineStart}-${comment.lineEnd}`;
+            return `
+                <div class="comment-item ${comment.resolved ? 'resolved' : ''}" data-id="${comment.id}">
+                    <div class="comment-meta">
+                        <span>${lineLabel}</span>
+                        <span>${timeStr}</span>
+                    </div>
+                    <div class="comment-text">${escapeHtml(comment.text)}</div>
+                    <div class="comment-actions">
+                        <button class="btn-tool btn-small" data-action="goto">GO TO</button>
+                        <button class="btn-tool btn-small" data-action="resolve">
+                            ${comment.resolved ? 'REOPEN' : 'RESOLVE'}
+                        </button>
+                        <button class="btn-tool btn-small btn-danger" data-action="delete">DELETE</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    handleCommentAction(event) {
+        const target = event.target.closest('button');
+        if (!target) return;
+        const item = event.target.closest('.comment-item');
+        if (!item) return;
+
+        const id = parseInt(item.dataset.id, 10);
+        const action = target.dataset.action;
+        const comment = this.state.comments.find(c => c.id === id);
+        if (!comment) return;
+
+        if (action === 'goto') {
+            this.gotoLine(comment.lineStart);
+            return;
+        }
+
+        if (action === 'resolve') {
+            comment.resolved = !comment.resolved;
+            this.saveComments();
+            this.renderComments();
+            return;
+        }
+
+        if (action === 'delete') {
+            if (!confirm('Delete this comment?')) return;
+            this.state.comments = this.state.comments.filter(c => c.id !== id);
+            this.saveComments();
+            this.renderComments();
+        }
+    },
+
+    loadVersionHistory() {
+        try {
+            const saved = localStorage.getItem('paperreader_versions');
+            this.state.versionHistory = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            this.state.versionHistory = [];
+        }
+        this.renderVersionHistory();
+    },
+
+    saveVersionSnapshot(filename, content, source = 'manual') {
+        if (!filename) return;
+        const existing = this.state.versionHistory.find(v => v.filename === filename);
+        if (existing && existing.content === content) return;
+
+        const now = Date.now();
+        const lastTime = this.state.versionThrottle[filename] || 0;
+        if (source === 'auto' && now - lastTime < 60000) {
+            return;
+        }
+        this.state.versionThrottle[filename] = now;
+
+        const entry = {
+            id: now,
+            filename,
+            timestamp: new Date().toISOString(),
+            content,
+            source
+        };
+
+        this.state.versionHistory.unshift(entry);
+
+        // Keep last 120 entries total
+        if (this.state.versionHistory.length > 120) {
+            this.state.versionHistory = this.state.versionHistory.slice(0, 120);
+        }
+
+        try {
+            localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+        } catch (e) {
+            console.warn('Failed to save version history');
+        }
+
+        if (this.elements.historyModal?.style.display === 'flex') {
+            this.renderVersionHistory();
+        }
+    },
+
+    updateHistoryFileOptions() {
+        const select = this.elements.historyFileSelect;
+        if (!select) return;
+
+        const current = select.value;
+        select.innerHTML = '';
+        this.state.files.forEach(file => {
+            const option = document.createElement('option');
+            option.value = file.name;
+            option.textContent = file.name;
+            select.appendChild(option);
+        });
+
+        if (current && this.state.files.find(f => f.name === current)) {
+            select.value = current;
+        } else if (this.state.currentFile) {
+            select.value = this.state.currentFile;
+        }
+    },
+
+    renderVersionHistory() {
+        const list = this.elements.historyVersionList;
+        const previewTitle = this.elements.historyPreviewTitle;
+        const previewContent = this.elements.historyPreviewContent;
+        if (!list || !previewTitle || !previewContent) return;
+
+        const filename = this.elements.historyFileSelect?.value || this.state.currentFile;
+        if (!filename) {
+            list.innerHTML = '<div class="outline-empty">Select a file</div>';
+            previewTitle.textContent = 'Select a version to preview';
+            previewContent.textContent = '';
+            if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = true;
+            if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = true;
+            return;
+        }
+
+        if (this.state.historyFileSelected !== filename) {
+            this.state.selectedVersionId = null;
+            this.state.historyFileSelected = filename;
+        }
+
+        const versions = this.state.versionHistory.filter(v => v.filename === filename);
+        if (versions.length === 0) {
+            list.innerHTML = '<div class="outline-empty">No versions yet</div>';
+            previewTitle.textContent = 'Select a version to preview';
+            previewContent.textContent = '';
+            if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = true;
+            if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = true;
+            return;
+        }
+
+        if (this.state.selectedVersionId && !versions.some(v => v.id === this.state.selectedVersionId)) {
+            this.state.selectedVersionId = null;
+        }
+
+        list.innerHTML = versions.map(v => {
+            const date = new Date(v.timestamp);
+            const label = date.toLocaleString();
+            const sourceLabel = v.source === 'auto' ? 'Auto' : 'Manual';
+            return `
+                <div class="history-version-item ${this.state.selectedVersionId === v.id ? 'active' : ''}" data-id="${v.id}">
+                    <div class="version-title">${label}</div>
+                    <div class="version-meta">${sourceLabel}</div>
+                </div>
+            `;
+        }).join('');
+
+        list.querySelectorAll('.history-version-item').forEach(item => {
+            item.addEventListener('click', () => {
+                const id = parseInt(item.dataset.id, 10);
+                this.selectVersionPreview(id);
+            });
+        });
+
+        const hasSelection = !!this.state.selectedVersionId;
+        if (!hasSelection) {
+            previewTitle.textContent = 'Select a version to preview';
+            previewContent.textContent = '';
+        }
+        if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = !hasSelection;
+        if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = !hasSelection;
+    },
+
+    selectVersionPreview(id) {
+        const entry = this.state.versionHistory.find(v => v.id === id);
+        if (!entry) return;
+
+        this.state.selectedVersionId = id;
+        if (this.elements.historyPreviewTitle) {
+            const date = new Date(entry.timestamp);
+            this.elements.historyPreviewTitle.textContent = `${entry.filename} - ${date.toLocaleString()}`;
+        }
+        if (this.elements.historyPreviewContent) {
+            this.elements.historyPreviewContent.textContent = entry.content || '';
+        }
+        if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = false;
+        if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = false;
+        this.renderVersionHistory();
+    },
+
+    restoreSelectedVersion() {
+        if (!this.state.selectedVersionId) {
+            showToast('Select a version to restore');
+            return;
+        }
+
+        const entry = this.state.versionHistory.find(v => v.id === this.state.selectedVersionId);
+        if (!entry) return;
+
+        if (!confirm('Restore this version? Current edits will be replaced.')) return;
+        const content = entry.content || '';
+        this.state.currentFile = entry.filename;
+        this.elements.codeEditor.value = content;
+        this.elements.codeEditor.disabled = false;
+        this.elements.btnSave.disabled = false;
+        this.elements.btnDelete.style.display = 'inline-block';
+        this.state.fileContents[entry.filename] = content;
+        this.state.dirtyFiles[entry.filename] = true;
+        this.updateCurrentFileLabel();
+        this.updateLineNumbers();
+        this.updateEditorStats();
+        this.buildOutlineFromContent(content);
+        this.renderComments();
+        this.renderFileList();
+        showToast('Version loaded');
+    },
+
+    copySelectedVersion() {
+        if (!this.state.selectedVersionId) {
+            showToast('Select a version to copy');
+            return;
+        }
+
+        const entry = this.state.versionHistory.find(v => v.id === this.state.selectedVersionId);
+        if (!entry) return;
+
+        const content = entry.content || '';
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(content).then(() => {
+                showToast('Version copied');
+            }).catch(() => {
+                prompt('Copy version content:', content);
+            });
+        } else {
+            prompt('Copy version content:', content);
+        }
+    },
+
+    toggleCompileLog() {
+        if (!this.elements.compileLogPanel) return;
+        const isOpen = this.elements.compileLogPanel.style.display === 'flex';
+        if (isOpen) {
+            this.hideCompileLog();
+        } else {
+            this.elements.compileLogPanel.style.display = 'flex';
+            this.renderCompileLog();
+        }
+    },
+
+    hideCompileLog() {
+        if (!this.elements.compileLogPanel) return;
+        this.elements.compileLogPanel.style.display = 'none';
+    },
+
+    summarizeCompileLog(logText) {
+        const lines = (logText || '').split('\n');
+        let errors = 0;
+        let warnings = 0;
+        lines.forEach(line => {
+            if (line.startsWith('!') || /error/i.test(line)) errors += 1;
+            if (/warning/i.test(line)) warnings += 1;
+        });
+        return { errors, warnings, lines: lines.length };
+    },
+
+    renderCompileLog() {
+        const log = this.state.lastCompileLog || '';
+        const filter = this.elements.compileLogFilter?.value || 'all';
+        const contentEl = this.elements.compileLogContent;
+        const metaEl = this.elements.compileLogMeta;
+        if (!contentEl || !metaEl) return;
+
+        if (!log) {
+            contentEl.textContent = '';
+            metaEl.textContent = 'No log loaded';
+            return;
+        }
+
+        const summary = this.summarizeCompileLog(log);
+        this.state.lastCompileSummary = { errors: summary.errors, warnings: summary.warnings };
+        metaEl.textContent = `Errors: ${summary.errors} | Warnings: ${summary.warnings} | Lines: ${summary.lines}`;
+
+        const lines = log.split('\n');
+        const rendered = lines.map(line => {
+            const isError = line.startsWith('!') || /error/i.test(line);
+            const isWarning = /warning/i.test(line);
+            if (filter === 'errors' && !isError) return null;
+            if (filter === 'warnings' && !isWarning) return null;
+            const cls = isError ? 'error' : (isWarning ? 'warning' : '');
+            const safe = escapeHtml(line);
+            return cls ? `<span class="compile-log-line ${cls}">${safe}</span>` : safe;
+        }).filter(Boolean);
+
+        contentEl.innerHTML = rendered.join('\n');
+    },
+
+    copyCompileLog() {
+        const log = this.state.lastCompileLog || '';
+        if (!log) {
+            showToast('No log to copy');
+            return;
+        }
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(log).then(() => {
+                showToast('Log copied');
+            }).catch(() => {
+                prompt('Copy compile log:', log);
+            });
+        } else {
+            prompt('Copy compile log:', log);
+        }
+    },
+
+    scheduleAutoSave() {
+        if (!this.state.autoSaveEnabled || !this.state.currentFile) return;
+        if (!this.isDirty(this.state.currentFile)) return;
+
+        if (this.state.autoSaveTimer) {
+            clearTimeout(this.state.autoSaveTimer);
+        }
+
+        this.state.autoSaveTimer = setTimeout(() => {
+            const now = Date.now();
+            if (now - this.state.lastAutoSaveAt < 2000) return;
+            this.state.lastAutoSaveAt = now;
+            this.saveCurrent({ silent: true, recordHistory: false, recordVersion: true, source: 'auto' });
+        }, 1200);
+    },
+
+    async saveCurrent(options = {}) {
+        if (!this.state.currentFile) return;
+
+        const {
+            silent = false,
+            recordHistory = true,
+            recordVersion = true,
+            source = 'manual',
+            skipAutoCompile = false
+        } = options;
+
         const content = this.elements.codeEditor.value;
-        this.elements.btnSave.innerHTML = '<span class="spinner-small"></span> SAVING...';
+        if (!silent) {
+            this.elements.btnSave.innerHTML = '<span class="spinner-small"></span> SAVING...';
+        }
 
         try {
             const res = await fetch(`${API_BASE}/api/project/save`, {
@@ -1147,11 +2111,37 @@ const EditorController = {
             });
 
             if (res.ok) {
-                this.elements.btnSave.innerHTML = '<i class="bi bi-check"></i> SAVED';
-                this.saveToHistory('Saved file', this.state.currentFile);
+                if (!silent) {
+                    this.elements.btnSave.innerHTML = '<i class="bi bi-check"></i> SAVED';
+                }
+                if (recordHistory) {
+                    const label = source === 'auto' ? 'Auto saved file' : 'Saved file';
+                    this.saveToHistory(label, this.state.currentFile);
+                }
+                if (recordVersion) {
+                    this.saveVersionSnapshot(this.state.currentFile, content, source);
+                }
+                this.state.fileContents[this.state.currentFile] = content;
+                this.state.dirtyFiles[this.state.currentFile] = false;
+                this.updateCurrentFileLabel();
+                this.renderFileList();
                 setTimeout(() => {
-                    this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+                    if (!silent) {
+                        this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+                    }
                 }, 2000);
+
+                if (silent) {
+                    showToast('Auto-saved');
+                }
+
+                if (!skipAutoCompile && this.state.autoCompileEnabled && this.state.currentFile.endsWith('.tex')) {
+                    const now = Date.now();
+                    if (now - this.state.lastCompileAt > 2500) {
+                        this.state.lastCompileAt = now;
+                        this.compileCurrent();
+                    }
+                }
                 return true;
             } else {
                 throw new Error("Save failed");
@@ -1159,13 +2149,15 @@ const EditorController = {
         } catch (e) {
             console.error(e);
             alert("Failed to save file");
-            this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+            if (!silent) {
+                this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+            }
             return false;
         }
     },
 
     async saveAndCompile() {
-        const saved = await this.saveCurrent();
+        const saved = await this.saveCurrent({ skipAutoCompile: true });
         if (saved && this.state.currentFile?.endsWith('.tex')) {
             showToast('Compiling...');
             await this.compileCurrent();
@@ -1202,6 +2194,9 @@ const EditorController = {
 
     async deleteCurrent() {
         if (!this.state.currentFile) return;
+        if (this.isDirty(this.state.currentFile)) {
+            if (!confirm(`"${this.state.currentFile}" has unsaved changes. Delete anyway?`)) return;
+        }
         if (!confirm(`Are you sure you want to delete ${this.state.currentFile}?`)) return;
 
         try {
@@ -1210,12 +2205,28 @@ const EditorController = {
             });
 
             if (res.ok) {
+                const deleted = this.state.currentFile;
                 this.state.currentFile = null;
                 this.elements.currentFileName.textContent = "Select a file...";
                 this.elements.codeEditor.value = "";
                 this.elements.codeEditor.disabled = true;
                 this.elements.btnSave.disabled = true;
                 this.elements.btnDelete.style.display = 'none';
+                delete this.state.fileContents[deleted];
+                delete this.state.dirtyFiles[deleted];
+                this.state.commentSelection = null;
+                this.updateCommentContext();
+                this.updateEditorStats();
+                this.state.comments = this.state.comments.filter(comment => comment.filename !== deleted);
+                this.saveComments();
+                this.state.versionHistory = this.state.versionHistory.filter(entry => entry.filename !== deleted);
+                try {
+                    localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+                } catch (e) {
+                    console.warn('Failed to update version history after delete');
+                }
+                this.renderComments();
+                this.saveToHistory('Deleted file', deleted);
                 await this.loadFiles();
             } else {
                 alert("Delete failed (File likely protected)");
@@ -1258,6 +2269,7 @@ const EditorController = {
         this.elements.btnCompile.classList.add('loading');
         this.elements.btnCompile.innerHTML = '<i class="bi bi-arrow-repeat"></i> <span class="btn-text">COMPILING...</span>';
 
+        this.state.lastCompileAt = Date.now();
         this.elements.compileStatus.style.display = 'flex';
         this.elements.compileStatus.innerHTML = '<span class="spinner-small"></span> Using pdflatex...';
 
@@ -1269,8 +2281,16 @@ const EditorController = {
             });
             const result = await res.json();
 
+            this.state.lastCompileLog = result.log || '';
+            if (this.elements.compileLogFilter) {
+                this.elements.compileLogFilter.value = 'all';
+            }
+            this.renderCompileLog();
+
             if (result.success) {
                 this.elements.compileStatus.innerHTML = '<i class="bi bi-check-circle-fill"></i> Compilation Success';
+                this.elements.compileStatus.style.color = 'var(--success)';
+                this.elements.compileStatus.style.borderColor = 'var(--success)';
                 setTimeout(() => {
                     this.elements.compileStatus.style.display = 'none';
                 }, 3000);
@@ -1279,6 +2299,7 @@ const EditorController = {
                 this.state.lastCompiledPdfUrl = `${API_BASE}/api/project/file/${result.pdf_path.split(/[\\/]/).pop()}`;
                 this.elements.btnDownloadCompiled.disabled = false;
                 this.loadPDF(result.pdf_path); // path on server, need endpoint to fetch
+                this.saveToHistory('Compiled document', target);
 
                 // Success animation on button
                 this.elements.btnCompile.classList.remove('loading');
@@ -1291,10 +2312,18 @@ const EditorController = {
             } else {
                 this.elements.compileStatus.innerHTML = '<i class="bi bi-x-circle-fill"></i> Detailed Compilation Log in Console';
                 this.elements.compileStatus.style.color = 'var(--error)';
+                this.elements.compileStatus.style.borderColor = 'var(--error)';
                 console.error("Compilation Log:", result.log);
                 alert("Compilation failed. Check console for logs.");
                 this.state.lastCompiledPdfUrl = null;
                 this.elements.btnDownloadCompiled.disabled = true;
+                if (this.elements.compileLogFilter) {
+                    this.elements.compileLogFilter.value = 'errors';
+                }
+                if (this.elements.compileLogPanel) {
+                    this.elements.compileLogPanel.style.display = 'flex';
+                }
+                this.renderCompileLog();
 
                 // Reset button
                 this.elements.btnCompile.classList.remove('loading');
@@ -1305,6 +2334,10 @@ const EditorController = {
             console.error(e);
             this.state.lastCompiledPdfUrl = null;
             this.elements.btnDownloadCompiled.disabled = true;
+            this.state.lastCompileLog = String(e);
+            this.renderCompileLog();
+            this.elements.compileStatus.style.color = 'var(--error)';
+            this.elements.compileStatus.style.borderColor = 'var(--error)';
 
             // Reset button
             this.elements.btnCompile.classList.remove('loading');
@@ -1332,6 +2365,7 @@ const EditorController = {
         const url = `${API_BASE}/api/project/file/${filename}`;
 
         this.elements.pdfContainer.innerHTML = ''; // Clear
+        this.state.currentPreviewPage = 1;
 
         try {
             const loadingTask = pdfjsLib.getDocument(url);
@@ -1341,10 +2375,56 @@ const EditorController = {
             for (let pageNum = 1; pageNum <= this.state.pdfDoc.numPages; pageNum++) {
                 await this.renderPage(pageNum);
             }
+            this.updatePageCount();
+            this.setupPdfScrollHandler();
         } catch (e) {
             console.error("PDF Render Error", e);
             this.elements.pdfContainer.innerHTML = '<div style="color:red; padding:20px;">Failed to load PDF</div>';
         }
+    },
+
+    updatePageCount() {
+        const total = this.state.pdfDoc?.numPages || 0;
+        const current = this.state.currentPreviewPage || 1;
+        if (this.elements.pageCountDisplay) {
+            this.elements.pageCountDisplay.textContent = total ? `Page ${current} of ${total}` : 'Page 0 of 0';
+        }
+    },
+
+    setupPdfScrollHandler() {
+        const container = this.elements.pdfContainer;
+        if (!container) return;
+
+        if (this.state.pdfScrollHandler) {
+            container.removeEventListener('scroll', this.state.pdfScrollHandler);
+        }
+
+        const handler = () => {
+            const pages = Array.from(container.querySelectorAll('.pdf-page'));
+            if (!pages.length) return;
+
+            const containerTop = container.getBoundingClientRect().top;
+            let closest = pages[0];
+            let closestOffset = Math.abs(closest.getBoundingClientRect().top - containerTop);
+
+            pages.forEach(page => {
+                const offset = Math.abs(page.getBoundingClientRect().top - containerTop);
+                if (offset < closestOffset) {
+                    closest = page;
+                    closestOffset = offset;
+                }
+            });
+
+            const pageNum = parseInt(closest.dataset.pageNumber, 10) || 1;
+            if (pageNum !== this.state.currentPreviewPage) {
+                this.state.currentPreviewPage = pageNum;
+                this.updatePageCount();
+            }
+        };
+
+        this.state.pdfScrollHandler = handler;
+        container.addEventListener('scroll', handler, { passive: true });
+        handler();
     },
 
     async renderPage(pageNum) {
@@ -1665,7 +2745,8 @@ const EditorController = {
             const page = await this.state.pdfDoc.getPage(i);
             const textContent = await page.getTextContent();
             const text = textContent.items.map(item => item.str).join(' ').toLowerCase();
-            const matches = (text.match(new RegExp(query.toLowerCase(), 'g')) || []).length;
+            const safeQuery = query.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const matches = (text.match(new RegExp(safeQuery, 'g')) || []).length;
             totalMatches += matches;
         }
 
@@ -1724,6 +2805,9 @@ const EditorController = {
 
         this.elements.historyModal.style.display = 'flex';
         this.renderHistory();
+        this.updateHistoryFileOptions();
+        this.switchHistoryTab('activity');
+        this.renderVersionHistory();
     },
 
     closeHistory() {
@@ -1797,6 +2881,8 @@ const EditorController = {
         for (let pageNum = 1; pageNum <= this.state.pdfDoc.numPages; pageNum++) {
             await this.renderPage(pageNum);
         }
+        this.updatePageCount();
+        this.setupPdfScrollHandler();
     },
 
     // ==========================================
@@ -2055,6 +3141,7 @@ const CopilotController = {
     elements: {
         fab: null,
         panel: null,
+        backdrop: null,
         messagesContainer: null,
         input: null,
         sendBtn: null,
@@ -2089,12 +3176,15 @@ const CopilotController = {
 
         if (!this.elements.fab) return;
 
+        this.setupBackdrop();
+
         // Setup resizer
         this.setupPanelResizer();
 
         // Setup event listeners
         this.setupEventListeners();
         this.makeDraggable();
+        this.setupPanelGestures();
         this.setupSpeechRecognition();
         this.setupTextSelection();
 
@@ -2147,6 +3237,15 @@ const CopilotController = {
         document.getElementById('context-clear')?.addEventListener('click', () => this.clearContext());
     },
 
+    setupBackdrop() {
+        if (this.elements.backdrop) return;
+        const backdrop = document.createElement('div');
+        backdrop.className = 'copilot-backdrop';
+        backdrop.addEventListener('click', () => this.close());
+        document.body.appendChild(backdrop);
+        this.elements.backdrop = backdrop;
+    },
+
     makeDraggable() {
         const fab = this.elements.fab;
         if (!fab) return;
@@ -2156,7 +3255,8 @@ const CopilotController = {
         let startX, startY, startLeft, startBottom;
         let totalDelta = 0;
 
-        const promoteToDragThreshold = 8; // px, lower so small drags don't toggle panel
+        const promoteToDragThreshold = 10; // px, reduce accidental drags
+        const tapThreshold = 14; // px, tolerate finger jitter on mobile
 
         const onStart = (e) => {
             isMouseDown = true;
@@ -2219,7 +3319,7 @@ const CopilotController = {
             fab.style.cursor = 'pointer';
 
             // Only treat as click when movement was tiny
-            if (!isDragging && totalDelta < promoteToDragThreshold / 2) {
+            if (!isDragging && totalDelta < tapThreshold) {
                 this.toggle();
             }
 
@@ -2235,6 +3335,53 @@ const CopilotController = {
         fab.addEventListener('touchstart', onStart, { passive: true });
         document.addEventListener('touchmove', onMove, { passive: true });
         document.addEventListener('touchend', onEnd);
+    },
+
+    setupPanelGestures() {
+        const panel = this.elements.panel;
+        const header = panel?.querySelector('.copilot-header');
+        if (!panel || !header) return;
+
+        let isDragging = false;
+        let startY = 0;
+        let deltaY = 0;
+
+        const start = (e) => {
+            if (!this.isOpen) return;
+            if (e.target.closest('button, textarea, input, select')) return;
+            isDragging = true;
+            startY = e.touches ? e.touches[0].clientY : e.clientY;
+            deltaY = 0;
+            panel.classList.add('dragging');
+        };
+
+        const move = (e) => {
+            if (!isDragging) return;
+            const currentY = e.touches ? e.touches[0].clientY : e.clientY;
+            deltaY = Math.max(0, currentY - startY);
+            panel.style.transform = `translateY(${deltaY}px)`;
+            panel.style.opacity = `${Math.max(0.4, 1 - deltaY / 240)}`;
+        };
+
+        const end = () => {
+            if (!isDragging) return;
+            panel.classList.remove('dragging');
+            panel.style.opacity = '';
+            if (deltaY > 120) {
+                this.close();
+            } else {
+                panel.style.transform = '';
+            }
+            isDragging = false;
+        };
+
+        header.addEventListener('mousedown', start);
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
+
+        header.addEventListener('touchstart', start, { passive: true });
+        header.addEventListener('touchmove', move, { passive: true });
+        header.addEventListener('touchend', end);
     },
 
     setupSpeechRecognition() {
@@ -2360,14 +3507,19 @@ const CopilotController = {
         this.isOpen = true;
         this.elements.panel?.classList.add('open');
         this.elements.fab?.classList.add('active');
+        this.elements.backdrop?.classList.add('visible');
         this.positionPanel();
-        this.elements.input?.focus();
+        if (!this.isMobileView()) {
+            this.elements.input?.focus();
+        }
     },
 
     close() {
         this.isOpen = false;
         this.elements.panel?.classList.remove('open');
         this.elements.fab?.classList.remove('active');
+        this.elements.backdrop?.classList.remove('visible');
+        this.resetPanelTransform();
     },
 
     clearContext() {
@@ -2381,6 +3533,14 @@ const CopilotController = {
         const fab = this.elements.fab;
         const panel = this.elements.panel;
         if (!fab || !panel) return;
+
+        if (this.isMobileView()) {
+            panel.style.left = '0';
+            panel.style.right = '0';
+            panel.style.bottom = '0';
+            panel.style.top = 'auto';
+            return;
+        }
 
         const rect = fab.getBoundingClientRect();
         const panelWidth = panel.offsetWidth || 400;
@@ -2406,6 +3566,16 @@ const CopilotController = {
         panel.style.top = `${top}px`;
         panel.style.right = 'auto';
         panel.style.bottom = 'auto';
+    },
+
+    resetPanelTransform() {
+        if (!this.elements.panel) return;
+        this.elements.panel.style.transform = '';
+        this.elements.panel.style.opacity = '';
+    },
+
+    isMobileView() {
+        return window.matchMedia('(max-width: 480px)').matches;
     },
 
     toggleVoice() {
