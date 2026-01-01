@@ -978,6 +978,7 @@ const EditorController = {
         sidebarPanelFiles: document.getElementById('sidebar-panel-files'),
         sidebarPanelOutline: document.getElementById('sidebar-panel-outline'),
         sidebarPanelComments: document.getElementById('sidebar-panel-comments'),
+        sidebarBackdrop: null,
         btnNewFile: document.getElementById('btn-new-file'),
         btnRenameFile: document.getElementById('btn-rename-file'),
         btnDuplicateFile: document.getElementById('btn-duplicate-file'),
@@ -1088,9 +1089,8 @@ const EditorController = {
         this.setupPanelResizer();
 
         // Sidebar toggle
-        this.elements.btnToggleSidebar?.addEventListener('click', () => {
-            this.elements.editorSidebar.classList.toggle('collapsed');
-        });
+        this.setupSidebarOverlay();
+        this.elements.btnToggleSidebar?.addEventListener('click', () => this.toggleSidebar());
 
         // Mobile Tab switching
         this.elements.btnShowSource?.addEventListener('click', () => this.switchMobileView('source'));
@@ -1099,6 +1099,10 @@ const EditorController = {
         // Initialize mobile view
         if (window.innerWidth <= 768) {
             this.switchMobileView('source');
+        }
+
+        if (this.isMobileEditorView()) {
+            this.setSidebarCollapsed(true);
         }
 
         // Update line numbers on editor scroll/input
@@ -1146,6 +1150,8 @@ const EditorController = {
 
         this.updateEditorStats();
         this.updateCommentContext();
+
+        window.addEventListener('resize', () => this.handleEditorResize());
     },
 
     async switchTab(tab) {
@@ -1158,6 +1164,11 @@ const EditorController = {
             // Show library tools
             document.querySelector('.toolbar').style.display = 'block';
             this.hideCompileLog();
+            if (this.isMobileEditorView()) {
+                this.setSidebarCollapsed(true);
+            } else {
+                this.elements.sidebarBackdrop?.classList.remove('visible');
+            }
             if (this.state.autoSaveTimer) {
                 clearTimeout(this.state.autoSaveTimer);
                 this.state.autoSaveTimer = null;
@@ -1174,6 +1185,9 @@ const EditorController = {
             // On mobile, default to source view when entering editor
             if (window.innerWidth <= 768) {
                 this.switchMobileView('source');
+            }
+            if (this.isMobileEditorView()) {
+                this.setSidebarCollapsed(true);
             }
         }
     },
@@ -1214,6 +1228,10 @@ const EditorController = {
             tabs[key]?.classList.toggle('active', key === tab);
             panels[key]?.classList.toggle('active', key === tab);
         });
+
+        if (this.isMobileEditorView()) {
+            this.setSidebarCollapsed(false);
+        }
     },
 
     switchHistoryTab(tab) {
@@ -1261,6 +1279,45 @@ const EditorController = {
         } else {
             prompt('Copy share link:', url);
         }
+    },
+
+    setupSidebarOverlay() {
+        if (this.elements.sidebarBackdrop) return;
+        const backdrop = document.createElement('div');
+        backdrop.className = 'editor-sidebar-backdrop';
+        backdrop.addEventListener('click', () => this.setSidebarCollapsed(true));
+        document.body.appendChild(backdrop);
+        this.elements.sidebarBackdrop = backdrop;
+    },
+
+    toggleSidebar() {
+        const isCollapsed = this.elements.editorSidebar?.classList.contains('collapsed');
+        this.setSidebarCollapsed(!isCollapsed);
+    },
+
+    setSidebarCollapsed(collapsed) {
+        if (!this.elements.editorSidebar) return;
+        this.elements.editorSidebar.classList.toggle('collapsed', collapsed);
+        this.elements.btnToggleSidebar?.classList.toggle('active', !collapsed);
+        if (this.isMobileEditorView()) {
+            this.elements.sidebarBackdrop?.classList.toggle('visible', !collapsed);
+        } else {
+            this.elements.sidebarBackdrop?.classList.remove('visible');
+        }
+    },
+
+    handleEditorResize() {
+        if (this.isMobileEditorView()) {
+            if (!this.elements.editorSidebar?.classList.contains('collapsed')) {
+                this.elements.sidebarBackdrop?.classList.add('visible');
+            }
+        } else {
+            this.elements.sidebarBackdrop?.classList.remove('visible');
+        }
+    },
+
+    isMobileEditorView() {
+        return window.matchMedia('(max-width: 900px)').matches;
     },
 
     async loadFiles() {
@@ -1347,6 +1404,9 @@ const EditorController = {
         this.state.currentFile = file.name;
         this.updateCurrentFileLabel();
         this.renderFileList();
+        if (this.isMobileEditorView()) {
+            this.setSidebarCollapsed(true);
+        }
 
         // Enable/Disable controls
         this.elements.btnSave.disabled = false;
@@ -1413,7 +1473,7 @@ const EditorController = {
         const statsEl = this.elements.editorStats;
         const editor = this.elements.codeEditor;
         if (!statsEl || !editor || editor.disabled) {
-            if (statsEl) statsEl.textContent = 'WORDS 0 | LINES 0 | CHARS 0';
+            if (statsEl) statsEl.textContent = 'WORDS 0 • LINES 0 • CHARS 0';
             return;
         }
 
@@ -1421,7 +1481,7 @@ const EditorController = {
         const lines = content.length ? content.split('\n').length : 0;
         const words = content.trim() ? content.trim().split(/\s+/).length : 0;
         const chars = content.length;
-        statsEl.textContent = `WORDS ${words} | LINES ${lines} | CHARS ${chars}`;
+        statsEl.textContent = `WORDS ${words} • LINES ${lines} • CHARS ${chars}`;
     },
 
     formatFileSize(bytes) {
