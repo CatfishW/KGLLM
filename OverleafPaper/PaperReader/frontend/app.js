@@ -47,7 +47,14 @@ const infoSize = document.getElementById('info-size');
 async function init() {
     setupEventListeners();
     setupMobileInteractions();
+    AuthController.init();
+    ProjectManager.init();
     setupEditor(); // Initialize Editor
+    ProjectManager.onProjectChange = (project) => {
+        EditorController.handleProjectSwitch();
+        TeamChatController.setProject(project);
+    };
+    ProjectManager.applyActiveProject();
     setupKeyboardShortcuts();
     setupButtonAnimations();
     showShortcutsHint();
@@ -267,6 +274,12 @@ function setupKeyboardShortcuts() {
         if (e.key === 'Escape') {
             if (pdfModal.classList.contains('active')) {
                 closeModal();
+            } else if (AuthController?.elements?.modal?.classList.contains('active')) {
+                AuthController.close();
+            } else if (ProjectManager?.elements?.modal?.classList.contains('active')) {
+                ProjectManager.closeModal();
+            } else if (TeamChatController?.isOpen) {
+                TeamChatController.close();
             } else if (isSearchFocused) {
                 searchInput.blur();
             }
@@ -745,6 +758,647 @@ function escapeHtml(text) {
 }
 
 /**
+ * Auth Controller - local account management
+ */
+const AuthController = {
+    storageUsersKey: 'paperreader_auth_users',
+    storageCurrentKey: 'paperreader_auth_current',
+    users: [],
+    currentUser: null,
+    elements: {
+        authBtn: null,
+        authLabel: null,
+        authSubtitle: null,
+        modal: null,
+        closeBtn: null,
+        tabLogin: null,
+        tabRegister: null,
+        panelLogin: null,
+        panelRegister: null,
+        panelAccount: null,
+        loginEmail: null,
+        loginPassword: null,
+        loginSubmit: null,
+        registerName: null,
+        registerEmail: null,
+        registerPassword: null,
+        registerSubmit: null,
+        accountName: null,
+        accountEmail: null,
+        logoutBtn: null
+    },
+
+    init() {
+        this.cacheElements();
+        if (!this.elements.authBtn || !this.elements.modal) return;
+        this.loadUsers();
+        this.loadSession();
+        this.bindEvents();
+        this.updateHeader();
+        this.updateAccountPanel();
+    },
+
+    cacheElements() {
+        this.elements.authBtn = document.getElementById('btn-auth');
+        this.elements.authLabel = document.getElementById('auth-label');
+        this.elements.authSubtitle = document.getElementById('auth-subtitle');
+        this.elements.modal = document.getElementById('auth-modal');
+        this.elements.closeBtn = document.getElementById('auth-close');
+        this.elements.tabLogin = document.getElementById('auth-tab-login');
+        this.elements.tabRegister = document.getElementById('auth-tab-register');
+        this.elements.panelLogin = document.getElementById('auth-panel-login');
+        this.elements.panelRegister = document.getElementById('auth-panel-register');
+        this.elements.panelAccount = document.getElementById('auth-panel-account');
+        this.elements.loginEmail = document.getElementById('auth-login-email');
+        this.elements.loginPassword = document.getElementById('auth-login-password');
+        this.elements.loginSubmit = document.getElementById('auth-login-submit');
+        this.elements.registerName = document.getElementById('auth-register-name');
+        this.elements.registerEmail = document.getElementById('auth-register-email');
+        this.elements.registerPassword = document.getElementById('auth-register-password');
+        this.elements.registerSubmit = document.getElementById('auth-register-submit');
+        this.elements.accountName = document.getElementById('auth-account-name');
+        this.elements.accountEmail = document.getElementById('auth-account-email');
+        this.elements.logoutBtn = document.getElementById('auth-logout');
+    },
+
+    bindEvents() {
+        this.elements.authBtn?.addEventListener('click', () => this.open());
+        this.elements.closeBtn?.addEventListener('click', () => this.close());
+        this.elements.modal?.querySelector('.overlay-backdrop')?.addEventListener('click', () => this.close());
+
+        this.elements.tabLogin?.addEventListener('click', () => this.showPanel('login'));
+        this.elements.tabRegister?.addEventListener('click', () => this.showPanel('register'));
+
+        this.elements.loginSubmit?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.login();
+        });
+        this.elements.registerSubmit?.addEventListener('click', (e) => {
+            e.preventDefault();
+            this.register();
+        });
+        this.elements.logoutBtn?.addEventListener('click', () => this.logout());
+    },
+
+    loadUsers() {
+        try {
+            const saved = localStorage.getItem(this.storageUsersKey);
+            this.users = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            this.users = [];
+        }
+    },
+
+    saveUsers() {
+        try {
+            localStorage.setItem(this.storageUsersKey, JSON.stringify(this.users));
+        } catch (e) {
+            console.warn('Failed to save users');
+        }
+    },
+
+    loadSession() {
+        const currentId = localStorage.getItem(this.storageCurrentKey);
+        if (!currentId) {
+            this.currentUser = null;
+            return;
+        }
+        this.currentUser = this.users.find(user => user.id === currentId) || null;
+    },
+
+    setCurrentUser(user) {
+        this.currentUser = user || null;
+        if (user) {
+            localStorage.setItem(this.storageCurrentKey, user.id);
+            localStorage.setItem('paperreader-user-name', user.name);
+            if (user.avatarSeed !== undefined) {
+                localStorage.setItem('paperreader-user-avatar', user.avatarSeed.toString());
+            }
+        } else {
+            localStorage.removeItem(this.storageCurrentKey);
+            localStorage.removeItem('paperreader-user-name');
+            localStorage.removeItem('paperreader-user-avatar');
+        }
+        this.updateHeader();
+        this.updateAccountPanel();
+        this.refreshPresenceAndChat();
+    },
+
+    updateHeader() {
+        if (!this.elements.authLabel || !this.elements.authSubtitle || !this.elements.authBtn) return;
+        if (this.currentUser) {
+            this.elements.authLabel.textContent = this.truncateLabel(this.currentUser.name, 14).toUpperCase();
+            this.elements.authSubtitle.textContent = 'SIGNED IN';
+            this.elements.authBtn.classList.add('signed-in');
+        } else {
+            this.elements.authLabel.textContent = 'SIGN IN';
+            this.elements.authSubtitle.textContent = 'GUEST';
+            this.elements.authBtn.classList.remove('signed-in');
+        }
+    },
+
+    updateAccountPanel() {
+        if (!this.elements.accountName || !this.elements.accountEmail) return;
+        if (this.currentUser) {
+            this.elements.accountName.textContent = this.currentUser.name;
+            this.elements.accountEmail.textContent = this.currentUser.email;
+        } else {
+            this.elements.accountName.textContent = 'Guest';
+            this.elements.accountEmail.textContent = 'Not signed in';
+        }
+    },
+
+    open() {
+        if (!this.elements.modal) return;
+        this.elements.modal.style.display = 'flex';
+        setTimeout(() => this.elements.modal.classList.add('active'), 10);
+        if (this.currentUser) {
+            this.showPanel('account');
+        } else {
+            this.showPanel('login');
+            if (this.elements.loginPassword) this.elements.loginPassword.value = '';
+        }
+    },
+
+    close() {
+        if (!this.elements.modal) return;
+        this.elements.modal.classList.remove('active');
+        setTimeout(() => {
+            this.elements.modal.style.display = 'none';
+        }, 200);
+    },
+
+    toggleTabs(visible) {
+        const display = visible ? '' : 'none';
+        if (this.elements.tabLogin) this.elements.tabLogin.style.display = display;
+        if (this.elements.tabRegister) this.elements.tabRegister.style.display = display;
+    },
+
+    showPanel(panel) {
+        this.elements.panelLogin?.classList.toggle('active', panel === 'login');
+        this.elements.panelRegister?.classList.toggle('active', panel === 'register');
+        this.elements.panelAccount?.classList.toggle('active', panel === 'account');
+        this.elements.tabLogin?.classList.toggle('active', panel === 'login');
+        this.elements.tabRegister?.classList.toggle('active', panel === 'register');
+        this.toggleTabs(panel !== 'account');
+    },
+
+    login() {
+        const email = (this.elements.loginEmail?.value || '').trim().toLowerCase();
+        const password = this.elements.loginPassword?.value || '';
+        if (!email || !password) {
+            showToast('Enter your email and password');
+            return;
+        }
+        const user = this.users.find(u => u.email.toLowerCase() === email && u.password === password);
+        if (!user) {
+            showToast('Invalid credentials');
+            return;
+        }
+        this.setCurrentUser(user);
+        showToast(`Welcome back, ${user.name}`);
+        this.close();
+    },
+
+    register() {
+        const name = (this.elements.registerName?.value || '').trim();
+        const email = (this.elements.registerEmail?.value || '').trim().toLowerCase();
+        const password = this.elements.registerPassword?.value || '';
+        if (!name || !email || !password) {
+            showToast('Complete all fields');
+            return;
+        }
+        if (this.users.find(u => u.email.toLowerCase() === email)) {
+            showToast('Email already registered');
+            return;
+        }
+        const user = {
+            id: `user_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+            name,
+            email,
+            password,
+            avatarSeed: Math.floor(Math.random() * 1000)
+        };
+        this.users.push(user);
+        this.saveUsers();
+        this.setCurrentUser(user);
+        showToast(`Account created for ${name}`);
+        this.close();
+    },
+
+    logout() {
+        this.setCurrentUser(null);
+        showToast('Signed out');
+        this.showPanel('login');
+    },
+
+    getPresenceProfile() {
+        if (!this.currentUser) return null;
+        const seed = this.currentUser.avatarSeed ?? this.currentUser.id;
+        return {
+            id: this.currentUser.id,
+            name: this.currentUser.name,
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${seed}&backgroundColor=b6e3f4,c0aede,d1d4f9`
+        };
+    },
+
+    refreshPresenceAndChat() {
+        if (typeof PresenceController !== 'undefined' && PresenceController.refreshUserProfile) {
+            PresenceController.refreshUserProfile();
+        }
+        if (typeof TeamChatController !== 'undefined' && TeamChatController.refreshUser) {
+            TeamChatController.refreshUser();
+        }
+    },
+
+    truncateLabel(text, maxLen) {
+        if (!text) return '';
+        if (text.length <= maxLen) return text;
+        return `${text.slice(0, maxLen - 3)}...`;
+    }
+};
+
+/**
+ * Project Manager - multi-project support (local + server)
+ */
+const ProjectManager = {
+    storageKey: 'paperreader_projects',
+    activeKey: 'paperreader_active_project',
+    projects: [],
+    activeProject: null,
+    onProjectChange: null,
+    elements: {
+        btnProjects: null,
+        modal: null,
+        closeBtn: null,
+        list: null,
+        nameInput: null,
+        typeSelect: null,
+        createBtn: null,
+        activeName: null
+    },
+
+    init() {
+        this.cacheElements();
+        this.loadProjects();
+        this.bindEvents();
+        this.renderProjects();
+        this.updateHeader();
+    },
+
+    cacheElements() {
+        this.elements.btnProjects = document.getElementById('btn-projects');
+        this.elements.modal = document.getElementById('project-modal');
+        this.elements.closeBtn = document.getElementById('project-close');
+        this.elements.list = document.getElementById('project-list');
+        this.elements.nameInput = document.getElementById('project-name-input');
+        this.elements.typeSelect = document.getElementById('project-type-select');
+        this.elements.createBtn = document.getElementById('project-create');
+        this.elements.activeName = document.getElementById('active-project-name');
+    },
+
+    bindEvents() {
+        this.elements.btnProjects?.addEventListener('click', () => this.openModal());
+        this.elements.closeBtn?.addEventListener('click', () => this.closeModal());
+        this.elements.modal?.querySelector('.overlay-backdrop')?.addEventListener('click', () => this.closeModal());
+        this.elements.createBtn?.addEventListener('click', () => this.createFromForm());
+        this.elements.nameInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                this.createFromForm();
+            }
+        });
+        this.elements.list?.addEventListener('click', (e) => this.handleListAction(e));
+    },
+
+    loadProjects() {
+        try {
+            const saved = localStorage.getItem(this.storageKey);
+            this.projects = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            this.projects = [];
+        }
+
+        if (!Array.isArray(this.projects)) {
+            this.projects = [];
+        }
+
+        if (!this.projects.find(project => project.id === 'server')) {
+            this.projects.unshift(this.createRemoteProject('Server Workspace', 'server'));
+        }
+
+        const urlProject = new URLSearchParams(window.location.search).get('project');
+        if (urlProject && !this.projects.find(project => project.id === urlProject)) {
+            this.projects.push(this.createRemoteProject(`Server Project ${urlProject}`, urlProject));
+        }
+
+        const activeId = urlProject || localStorage.getItem(this.activeKey) || this.projects[0]?.id;
+        this.activeProject = this.projects.find(project => project.id === activeId) || this.projects[0] || null;
+    },
+
+    saveProjects() {
+        try {
+            localStorage.setItem(this.storageKey, JSON.stringify(this.projects));
+        } catch (e) {
+            console.warn('Failed to save projects');
+        }
+    },
+
+    applyActiveProject() {
+        if (this.activeProject?.id) {
+            localStorage.setItem(this.activeKey, this.activeProject.id);
+        }
+        this.updateHeader();
+        this.renderProjects();
+        this.notifyChange();
+    },
+
+    notifyChange() {
+        if (typeof this.onProjectChange === 'function') {
+            this.onProjectChange(this.activeProject);
+        }
+    },
+
+    openModal() {
+        if (!this.elements.modal) return;
+        this.renderProjects();
+        this.elements.modal.style.display = 'flex';
+        setTimeout(() => this.elements.modal.classList.add('active'), 10);
+    },
+
+    closeModal() {
+        if (!this.elements.modal) return;
+        this.elements.modal.classList.remove('active');
+        setTimeout(() => {
+            this.elements.modal.style.display = 'none';
+        }, 200);
+    },
+
+    updateHeader() {
+        if (!this.elements.activeName) return;
+        const name = this.activeProject?.name || 'SERVER';
+        this.elements.activeName.textContent = this.truncateLabel(name.toUpperCase(), 16);
+    },
+
+    setActiveProject(id, options = {}) {
+        const project = this.projects.find(item => item.id === id);
+        if (!project) return;
+        this.activeProject = project;
+        localStorage.setItem(this.activeKey, project.id);
+        this.touchProject(project.id);
+        this.updateHeader();
+        this.renderProjects();
+        if (!options.silent) {
+            this.closeModal();
+        }
+        this.notifyChange();
+    },
+
+    touchProject(id) {
+        const project = this.projects.find(item => item.id === id);
+        if (project) {
+            project.updatedAt = Date.now();
+            this.saveProjects();
+        }
+    },
+
+    createFromForm() {
+        const name = this.sanitizeName(this.elements.nameInput?.value || '');
+        if (!name) {
+            showToast('Project name required');
+            return;
+        }
+        if (this.projects.some(project => project.name.toLowerCase() === name.toLowerCase())) {
+            showToast('Project name already exists');
+            return;
+        }
+        const type = this.elements.typeSelect?.value === 'remote' ? 'remote' : 'local';
+        const id = this.generateProjectId(name, type);
+        const project = {
+            id,
+            name,
+            type,
+            updatedAt: Date.now(),
+            files: type === 'local' ? this.createTemplateFiles(name) : []
+        };
+        this.projects.unshift(project);
+        this.saveProjects();
+        if (this.elements.nameInput) this.elements.nameInput.value = '';
+        this.setActiveProject(id);
+    },
+
+    handleListAction(event) {
+        const btn = event.target.closest('button');
+        const item = event.target.closest('.project-item');
+        if (!btn || !item) return;
+        const id = item.dataset.id;
+        const action = btn.dataset.action;
+        if (!id || !action) return;
+
+        if (action === 'open') {
+            this.setActiveProject(id);
+            return;
+        }
+        if (action === 'rename') {
+            this.renameProject(id);
+            return;
+        }
+        if (action === 'duplicate') {
+            this.duplicateProject(id);
+            return;
+        }
+        if (action === 'delete') {
+            this.deleteProject(id);
+        }
+    },
+
+    renameProject(id) {
+        const project = this.projects.find(item => item.id === id);
+        if (!project) return;
+        const name = prompt('Rename project:', project.name);
+        const clean = this.sanitizeName(name || '');
+        if (!clean) return;
+        project.name = clean;
+        project.updatedAt = Date.now();
+        this.saveProjects();
+        this.updateHeader();
+        this.renderProjects();
+    },
+
+    duplicateProject(id) {
+        const project = this.projects.find(item => item.id === id);
+        if (!project) return;
+        if (project.type !== 'local') {
+            showToast('Duplicate is only available for local projects');
+            return;
+        }
+        const clone = {
+            id: this.generateProjectId(`${project.name} Copy`, 'local'),
+            name: `${project.name} Copy`,
+            type: 'local',
+            updatedAt: Date.now(),
+            files: (project.files || []).map(file => ({ ...file }))
+        };
+        this.projects.unshift(clone);
+        this.saveProjects();
+        this.renderProjects();
+        showToast('Project duplicated');
+    },
+
+    deleteProject(id) {
+        const project = this.projects.find(item => item.id === id);
+        if (!project) return;
+        if (project.id === 'server') {
+            showToast('Server workspace cannot be deleted');
+            return;
+        }
+        if (!confirm(`Delete project "${project.name}"?`)) return;
+        this.projects = this.projects.filter(item => item.id !== id);
+        if (this.activeProject?.id === id) {
+            this.activeProject = this.projects[0] || null;
+            if (this.activeProject) {
+                localStorage.setItem(this.activeKey, this.activeProject.id);
+            } else {
+                localStorage.removeItem(this.activeKey);
+            }
+        }
+        this.saveProjects();
+        this.updateHeader();
+        this.renderProjects();
+        this.notifyChange();
+    },
+
+    renderProjects() {
+        if (!this.elements.list) return;
+        if (!this.projects.length) {
+            this.elements.list.innerHTML = '<div class="outline-empty">No projects yet</div>';
+            return;
+        }
+        this.elements.list.innerHTML = this.projects.map(project => {
+            const isActive = this.activeProject?.id === project.id;
+            const updated = project.updatedAt ? new Date(project.updatedAt).toLocaleString() : 'Never';
+            const fileCount = project.type === 'local' ? `${project.files?.length || 0} files` : 'Server';
+            const tagClass = project.type === 'local' ? 'project-tag local' : 'project-tag';
+            const typeLabel = project.type === 'local' ? 'local' : 'server';
+            const disableDelete = project.id === 'server';
+            return `
+                <div class="project-item ${isActive ? 'active' : ''}" data-id="${project.id}">
+                    <div class="project-info">
+                        <div class="project-name">${escapeHtml(project.name)}</div>
+                        <div class="project-meta">
+                            <span class="${tagClass}">${typeLabel}</span>
+                            <span>${fileCount}</span>
+                            <span>Updated ${updated}</span>
+                        </div>
+                    </div>
+                    <div class="project-actions">
+                        <button class="btn-tool btn-small" data-action="open">${isActive ? 'ACTIVE' : 'OPEN'}</button>
+                        <button class="btn-tool btn-small" data-action="rename">RENAME</button>
+                        <button class="btn-tool btn-small" data-action="duplicate">DUPLICATE</button>
+                        <button class="btn-tool btn-small btn-danger" data-action="delete" ${disableDelete ? 'disabled' : ''}>DELETE</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    createRemoteProject(name, id) {
+        return {
+            id,
+            name,
+            type: 'remote',
+            updatedAt: Date.now(),
+            files: []
+        };
+    },
+
+    createTemplateFiles(projectName) {
+        const safeName = projectName.replace(/[^a-zA-Z0-9 ]+/g, '').trim() || 'Paper Reader';
+        const mainTex = `% ${safeName}\n\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\usepackage{graphicx}\n\\title{${safeName}}\n\\author{Your Name}\n\\date{\\today}\n\\begin{document}\n\\maketitle\n\\begin{abstract}\nWrite your abstract here.\n\\end{abstract}\n\\section{Introduction}\nStart writing your paper...\n\\end{document}\n`;
+        const bib = `@article{sample2024,\n  title={Sample Reference},\n  author={Doe, Jane},\n  journal={Journal of Retro Research},\n  year={2024}\n}\n`;
+        return [
+            { name: 'main.tex', content: mainTex, updatedAt: Date.now() },
+            { name: 'refs.bib', content: bib, updatedAt: Date.now() }
+        ];
+    },
+
+    generateProjectId(name, type) {
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'project';
+        return `${type}_${slug}_${Date.now().toString(36)}`;
+    },
+
+    sanitizeName(name) {
+        const trimmed = (name || '').trim();
+        if (!trimmed) return null;
+        return trimmed.slice(0, 60);
+    },
+
+    truncateLabel(text, maxLen) {
+        if (!text) return '';
+        if (text.length <= maxLen) return text;
+        return `${text.slice(0, maxLen - 3)}...`;
+    },
+
+    isLocalProject() {
+        return this.activeProject?.type === 'local';
+    },
+
+    getLocalFilesList() {
+        if (!this.isLocalProject()) return [];
+        return (this.activeProject.files || []).map(file => ({
+            name: file.name,
+            type: this.inferFileType(file.name),
+            size: (file.content || '').length
+        }));
+    },
+
+    getLocalFileContent(filename) {
+        if (!this.isLocalProject()) return null;
+        const entry = (this.activeProject.files || []).find(file => file.name === filename);
+        return entry ? entry.content : null;
+    },
+
+    saveLocalFile(filename, content) {
+        if (!this.isLocalProject()) return false;
+        const files = this.activeProject.files || [];
+        const existing = files.find(file => file.name === filename);
+        if (existing) {
+            existing.content = content;
+            existing.updatedAt = Date.now();
+        } else {
+            files.push({ name: filename, content, updatedAt: Date.now() });
+        }
+        this.activeProject.files = files;
+        this.touchProject(this.activeProject.id);
+        return true;
+    },
+
+    deleteLocalFile(filename) {
+        if (!this.isLocalProject()) return false;
+        this.activeProject.files = (this.activeProject.files || []).filter(file => file.name !== filename);
+        this.touchProject(this.activeProject.id);
+        return true;
+    },
+
+    renameLocalFile(oldName, newName) {
+        if (!this.isLocalProject()) return false;
+        const files = this.activeProject.files || [];
+        const entry = files.find(file => file.name === oldName);
+        if (!entry) return false;
+        entry.name = newName;
+        entry.updatedAt = Date.now();
+        this.touchProject(this.activeProject.id);
+        return true;
+    },
+
+    inferFileType(filename) {
+        if (filename.endsWith('.tex')) return 'tex';
+        if (filename.endsWith('.bib')) return 'bib';
+        return 'file';
+    }
+};
+
+/**
  * Real-time Presence Controller
  */
 const PresenceController = {
@@ -758,6 +1412,9 @@ const PresenceController = {
     },
 
     generateUser() {
+        const authProfile = AuthController.getPresenceProfile();
+        if (authProfile) return authProfile;
+
         // Generate a fun random name if not in local storage
         let name = localStorage.getItem('paperreader-user-name');
         if (!name) {
@@ -777,6 +1434,24 @@ const PresenceController = {
             name: name,
             avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}&backgroundColor=b6e3f4,c0aede,d1d4f9`
         };
+    },
+
+    refreshUserProfile() {
+        this.user = this.generateUser();
+        if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+            try {
+                this.ws.send(JSON.stringify({ type: 'join', user: this.user }));
+            } catch (e) {
+                console.warn('Failed to refresh presence user');
+            }
+        } else {
+            try {
+                this.ws?.close();
+            } catch (e) {
+                console.warn('Failed to close websocket');
+            }
+            this.connect();
+        }
     },
 
     connect() {
@@ -856,6 +1531,10 @@ const PresenceController = {
                     <div class="user-tooltip">${escapeHtml(user.name)}</div>
                 </div>
             `).join('');
+        }
+
+        if (typeof TeamChatController !== 'undefined' && TeamChatController.updateUsersFromPresence) {
+            TeamChatController.updateUsersFromPresence(users);
         }
     }
 };
@@ -1269,7 +1948,17 @@ const EditorController = {
     },
 
     copyShareLink() {
-        const url = window.location.href;
+        const project = this.getActiveProject();
+        if (project?.type === 'local') {
+            showToast('Share link is only available for server projects');
+            return;
+        }
+        let url = window.location.href;
+        if (project?.id && project.id !== 'server') {
+            const params = new URLSearchParams(window.location.search);
+            params.set('project', project.id);
+            url = `${window.location.origin}${window.location.pathname}?${params.toString()}`;
+        }
         if (navigator.clipboard && navigator.clipboard.writeText) {
             navigator.clipboard.writeText(url).then(() => {
                 showToast('Share link copied');
@@ -1320,12 +2009,85 @@ const EditorController = {
         return window.matchMedia('(max-width: 900px)').matches;
     },
 
+    getActiveProject() {
+        return ProjectManager.activeProject || null;
+    },
+
+    isLocalProject() {
+        return ProjectManager.isLocalProject();
+    },
+
+    getProjectStorageKey(baseKey) {
+        const projectId = this.getActiveProject()?.id || 'default';
+        return `${baseKey}_${projectId}`;
+    },
+
+    withProjectParam(url) {
+        const project = this.getActiveProject();
+        if (!project || project.type !== 'remote' || !project.id || project.id === 'server') return url;
+        const joiner = url.includes('?') ? '&' : '?';
+        return `${url}${joiner}project_id=${encodeURIComponent(project.id)}`;
+    },
+
+    handleProjectSwitch() {
+        this.state.currentFile = null;
+        this.state.files = [];
+        this.state.fileContents = {};
+        this.state.dirtyFiles = {};
+        this.state.commentSelection = null;
+        this.state.outlineItems = [];
+        this.state.editHistory = [];
+        this.state.versionHistory = [];
+        this.state.selectedVersionId = null;
+        this.state.historyFileSelected = null;
+        this.state.lastCompiledPdfUrl = null;
+        this.state.fileFilter = '';
+
+        if (this.elements.fileSearchInput) {
+            this.elements.fileSearchInput.value = '';
+        }
+
+        if (this.elements.currentFileName) {
+            this.elements.currentFileName.textContent = 'Select a file...';
+        }
+        if (this.elements.codeEditor) {
+            this.elements.codeEditor.value = '';
+            this.elements.codeEditor.disabled = true;
+        }
+        this.elements.btnSave.disabled = true;
+        this.elements.btnDelete.style.display = 'none';
+        this.elements.btnDownloadCompiled.disabled = true;
+        if (this.elements.btnCompile) {
+            const isLocal = this.isLocalProject();
+            this.elements.btnCompile.disabled = isLocal;
+            this.elements.btnCompile.title = isLocal ? 'Compile requires a server project' : 'Recompile';
+        }
+        if (this.elements.btnAutoCompile) {
+            const isLocal = this.isLocalProject();
+            this.elements.btnAutoCompile.disabled = isLocal;
+            this.elements.btnAutoCompile.title = isLocal ? 'Auto compile requires a server project' : 'Toggle auto compile';
+        }
+
+        this.loadHistory();
+        this.loadVersionHistory();
+        this.loadComments();
+        this.renderComments();
+        this.updateEditorStats();
+        this.buildOutlineFromContent('');
+        this.loadFiles();
+        this.renderFileList();
+    },
+
     async loadFiles() {
         try {
-            const res = await fetch(`${API_BASE}/api/project/files`);
-            if (!res.ok) throw new Error("Failed to load files");
-            const data = await res.json();
-            this.state.files = data.files || [];
+            if (this.isLocalProject()) {
+                this.state.files = ProjectManager.getLocalFilesList();
+            } else {
+                const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/files`));
+                if (!res.ok) throw new Error("Failed to load files");
+                const data = await res.json();
+                this.state.files = data.files || [];
+            }
             this.renderFileList();
             this.updateHistoryFileOptions();
 
@@ -1357,7 +2119,8 @@ const EditorController = {
         const files = this.state.files.filter(file => file.name.toLowerCase().includes(filter));
 
         if (files.length === 0) {
-            this.elements.fileList.innerHTML = '<div class="outline-empty">No files match the filter</div>';
+            const message = filter ? 'No files match the filter' : 'No files yet';
+            this.elements.fileList.innerHTML = `<div class="outline-empty">${message}</div>`;
             return;
         }
 
@@ -1416,7 +2179,23 @@ const EditorController = {
         // Load content
         try {
             this.elements.codeEditor.value = "Loading...";
-            const res = await fetch(`${API_BASE}/api/project/content/${file.name}`);
+            if (this.isLocalProject()) {
+                const content = ProjectManager.getLocalFileContent(file.name) || '';
+                this.elements.codeEditor.value = content;
+                this.state.fileContents[file.name] = content;
+                this.state.dirtyFiles[file.name] = false;
+                this.state.commentSelection = null;
+                this.updateCommentContext();
+                this.updateCurrentFileLabel();
+                this.updateLineNumbers();
+                this.updateCurrentLine();
+                this.updateEditorStats();
+                this.buildOutlineFromContent(content);
+                this.renderComments();
+                return;
+            }
+
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/content/${file.name}`));
             if (!res.ok) throw new Error("Failed to load content");
             const data = await res.json();
             this.elements.codeEditor.value = data.content;
@@ -1545,10 +2324,14 @@ const EditorController = {
         const ok = await this.saveFileContent(name, content);
         if (!ok) return;
 
-        try {
-            await fetch(`${API_BASE}/api/project/file/${oldName}`, { method: 'DELETE' });
-        } catch (e) {
-            console.warn('Failed to delete old file after rename', e);
+        if (this.isLocalProject()) {
+            ProjectManager.renameLocalFile(oldName, name);
+        } else {
+            try {
+                await fetch(this.withProjectParam(`${API_BASE}/api/project/file/${oldName}`), { method: 'DELETE' });
+            } catch (e) {
+                console.warn('Failed to delete old file after rename', e);
+            }
         }
 
         this.state.currentFile = name;
@@ -1576,7 +2359,7 @@ const EditorController = {
             return entry;
         });
         try {
-            localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+            localStorage.setItem(this.getProjectStorageKey('paperreader_versions'), JSON.stringify(this.state.versionHistory));
         } catch (e) {
             console.warn('Failed to update version history for rename');
         }
@@ -1613,13 +2396,26 @@ const EditorController = {
 
     async saveFileContent(filename, content) {
         try {
-            const res = await fetch(`${API_BASE}/api/project/save`, {
+            if (this.isLocalProject()) {
+                const ok = ProjectManager.saveLocalFile(filename, content);
+                if (!ok) throw new Error('Save failed');
+                this.saveVersionSnapshot(filename, content, 'manual');
+                if (this.getActiveProject()?.id) {
+                    ProjectManager.touchProject(this.getActiveProject().id);
+                }
+                return true;
+            }
+
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/save`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filename, content })
             });
             if (!res.ok) throw new Error('Save failed');
             this.saveVersionSnapshot(filename, content, 'manual');
+            if (this.getActiveProject()?.id) {
+                ProjectManager.touchProject(this.getActiveProject().id);
+            }
             return true;
         } catch (e) {
             console.error('Save failed', e);
@@ -1699,7 +2495,7 @@ const EditorController = {
 
     loadComments() {
         try {
-            const saved = localStorage.getItem('paperreader_comments');
+            const saved = localStorage.getItem(this.getProjectStorageKey('paperreader_comments'));
             this.state.comments = saved ? JSON.parse(saved) : [];
         } catch (e) {
             this.state.comments = [];
@@ -1709,7 +2505,7 @@ const EditorController = {
 
     saveComments() {
         try {
-            localStorage.setItem('paperreader_comments', JSON.stringify(this.state.comments));
+            localStorage.setItem(this.getProjectStorageKey('paperreader_comments'), JSON.stringify(this.state.comments));
         } catch (e) {
             console.warn('Failed to save comments');
         }
@@ -1858,7 +2654,7 @@ const EditorController = {
 
     loadVersionHistory() {
         try {
-            const saved = localStorage.getItem('paperreader_versions');
+            const saved = localStorage.getItem(this.getProjectStorageKey('paperreader_versions'));
             this.state.versionHistory = saved ? JSON.parse(saved) : [];
         } catch (e) {
             this.state.versionHistory = [];
@@ -1894,7 +2690,7 @@ const EditorController = {
         }
 
         try {
-            localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+            localStorage.setItem(this.getProjectStorageKey('paperreader_versions'), JSON.stringify(this.state.versionHistory));
         } catch (e) {
             console.warn('Failed to save version history');
         }
@@ -2161,51 +2957,64 @@ const EditorController = {
         }
 
         try {
-            const res = await fetch(`${API_BASE}/api/project/save`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    filename: this.state.currentFile,
-                    content: content
-                })
-            });
+            if (this.isLocalProject()) {
+                const ok = ProjectManager.saveLocalFile(this.state.currentFile, content);
+                if (!ok) throw new Error('Save failed');
+            } else {
+                const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/save`), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        filename: this.state.currentFile,
+                        content: content
+                    })
+                });
+                if (!res.ok) throw new Error('Save failed');
+            }
 
-            if (res.ok) {
+            if (this.isLocalProject()) {
+                this.state.files = ProjectManager.getLocalFilesList();
+            }
+
+            if (!silent) {
+                this.elements.btnSave.innerHTML = '<i class="bi bi-check"></i> SAVED';
+            }
+            if (recordHistory) {
+                const label = source === 'auto' ? 'Auto saved file' : 'Saved file';
+                this.saveToHistory(label, this.state.currentFile);
+            }
+            if (recordVersion) {
+                this.saveVersionSnapshot(this.state.currentFile, content, source);
+            }
+            this.state.fileContents[this.state.currentFile] = content;
+            this.state.dirtyFiles[this.state.currentFile] = false;
+            this.updateCurrentFileLabel();
+            this.renderFileList();
+            if (this.getActiveProject()?.id) {
+                ProjectManager.touchProject(this.getActiveProject().id);
+            }
+            setTimeout(() => {
                 if (!silent) {
-                    this.elements.btnSave.innerHTML = '<i class="bi bi-check"></i> SAVED';
+                    this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
                 }
-                if (recordHistory) {
-                    const label = source === 'auto' ? 'Auto saved file' : 'Saved file';
-                    this.saveToHistory(label, this.state.currentFile);
-                }
-                if (recordVersion) {
-                    this.saveVersionSnapshot(this.state.currentFile, content, source);
-                }
-                this.state.fileContents[this.state.currentFile] = content;
-                this.state.dirtyFiles[this.state.currentFile] = false;
-                this.updateCurrentFileLabel();
-                this.renderFileList();
-                setTimeout(() => {
-                    if (!silent) {
-                        this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
-                    }
-                }, 2000);
+            }, 2000);
 
-                if (silent) {
-                    showToast('Auto-saved');
-                }
+            if (silent) {
+                showToast('Auto-saved');
+            }
 
-                if (!skipAutoCompile && this.state.autoCompileEnabled && this.state.currentFile.endsWith('.tex')) {
+            if (!skipAutoCompile && this.state.autoCompileEnabled && this.state.currentFile.endsWith('.tex')) {
+                if (this.isLocalProject()) {
+                    showToast('Auto compile needs a server project');
+                } else {
                     const now = Date.now();
                     if (now - this.state.lastCompileAt > 2500) {
                         this.state.lastCompileAt = now;
                         this.compileCurrent();
                     }
                 }
-                return true;
-            } else {
-                throw new Error("Save failed");
             }
+            return true;
         } catch (e) {
             console.error(e);
             alert("Failed to save file");
@@ -2219,6 +3028,10 @@ const EditorController = {
     async saveAndCompile() {
         const saved = await this.saveCurrent({ skipAutoCompile: true });
         if (saved && this.state.currentFile?.endsWith('.tex')) {
+            if (this.isLocalProject()) {
+                showToast('Compile requires a server project');
+                return;
+            }
             showToast('Compiling...');
             await this.compileCurrent();
         }
@@ -2228,12 +3041,44 @@ const EditorController = {
         const file = e.target.files[0];
         if (!file) return;
 
+        if (this.isLocalProject()) {
+            this.elements.btnUpload.innerHTML = '<span class="spinner-small"></span>';
+            const isTextFile = /\.(tex|bib|txt|md)$/i.test(file.name);
+            if (!isTextFile) {
+                ProjectManager.saveLocalFile(file.name, `% Binary file uploaded: ${file.name}\n`);
+                this.saveToHistory('Uploaded file', file.name);
+                await this.loadFiles();
+                this.elements.fileUploadInput.value = '';
+                this.elements.btnUpload.innerHTML = '<i class="bi bi-upload"></i>';
+                showToast('Binary file stored as placeholder');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = async () => {
+                const content = typeof reader.result === 'string' ? reader.result : '';
+                ProjectManager.saveLocalFile(file.name, content);
+                this.saveToHistory('Uploaded file', file.name);
+                await this.loadFiles();
+                this.elements.fileUploadInput.value = '';
+                this.elements.btnUpload.innerHTML = '<i class="bi bi-upload"></i>';
+                showToast('File uploaded');
+            };
+            reader.onerror = () => {
+                console.error('Upload error');
+                showToast('Upload error');
+                this.elements.btnUpload.innerHTML = '<i class="bi bi-upload"></i>';
+            };
+            reader.readAsText(file);
+            return;
+        }
+
         const formData = new FormData();
         formData.append('file', file);
 
         try {
             this.elements.btnUpload.innerHTML = '<span class="spinner-small"></span>';
-            const res = await fetch(`${API_BASE}/api/project/upload`, {
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/upload`), {
                 method: 'POST',
                 body: formData
             });
@@ -2260,7 +3105,36 @@ const EditorController = {
         if (!confirm(`Are you sure you want to delete ${this.state.currentFile}?`)) return;
 
         try {
-            const res = await fetch(`${API_BASE}/api/project/file/${this.state.currentFile}`, {
+            if (this.isLocalProject()) {
+                const ok = ProjectManager.deleteLocalFile(this.state.currentFile);
+                if (!ok) throw new Error('Delete failed');
+                const deleted = this.state.currentFile;
+                this.state.currentFile = null;
+                this.elements.currentFileName.textContent = "Select a file...";
+                this.elements.codeEditor.value = "";
+                this.elements.codeEditor.disabled = true;
+                this.elements.btnSave.disabled = true;
+                this.elements.btnDelete.style.display = 'none';
+                delete this.state.fileContents[deleted];
+                delete this.state.dirtyFiles[deleted];
+                this.state.commentSelection = null;
+                this.updateCommentContext();
+                this.updateEditorStats();
+                this.state.comments = this.state.comments.filter(comment => comment.filename !== deleted);
+                this.saveComments();
+                this.state.versionHistory = this.state.versionHistory.filter(entry => entry.filename !== deleted);
+                try {
+                    localStorage.setItem(this.getProjectStorageKey('paperreader_versions'), JSON.stringify(this.state.versionHistory));
+                } catch (e) {
+                    console.warn('Failed to update version history after delete');
+                }
+                this.renderComments();
+                this.saveToHistory('Deleted file', deleted);
+                await this.loadFiles();
+                return;
+            }
+
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/file/${this.state.currentFile}`), {
                 method: 'DELETE'
             });
 
@@ -2281,7 +3155,7 @@ const EditorController = {
                 this.saveComments();
                 this.state.versionHistory = this.state.versionHistory.filter(entry => entry.filename !== deleted);
                 try {
-                    localStorage.setItem('paperreader_versions', JSON.stringify(this.state.versionHistory));
+                    localStorage.setItem(this.getProjectStorageKey('paperreader_versions'), JSON.stringify(this.state.versionHistory));
                 } catch (e) {
                     console.warn('Failed to update version history after delete');
                 }
@@ -2308,6 +3182,11 @@ const EditorController = {
     },
 
     async compileCurrent() {
+        if (this.isLocalProject()) {
+            showToast('Compile requires a server project');
+            return;
+        }
+
         // Always compile the main tex file usually, or the current one?
         // Let's assume lam_main_latest.tex is the main one or try to identify it.
         // For this demo, let's just compile the currently selected file if it is .tex,
@@ -2334,7 +3213,7 @@ const EditorController = {
         this.elements.compileStatus.innerHTML = '<span class="spinner-small"></span> Using pdflatex...';
 
         try {
-            const res = await fetch(`${API_BASE}/api/compile`, {
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/compile`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ filename: target })
@@ -2356,7 +3235,7 @@ const EditorController = {
                 }, 3000);
 
                 // Show PDF
-                this.state.lastCompiledPdfUrl = `${API_BASE}/api/project/file/${result.pdf_path.split(/[\\/]/).pop()}`;
+                this.state.lastCompiledPdfUrl = this.withProjectParam(`${API_BASE}/api/project/file/${result.pdf_path.split(/[\\/]/).pop()}`);
                 this.elements.btnDownloadCompiled.disabled = false;
                 this.loadPDF(result.pdf_path); // path on server, need endpoint to fetch
                 this.saveToHistory('Compiled document', target);
@@ -2406,6 +3285,10 @@ const EditorController = {
     },
 
     downloadCompiled() {
+        if (this.isLocalProject()) {
+            showToast('Compile requires a server project');
+            return;
+        }
         if (!this.state.lastCompiledPdfUrl) {
             showToast('Compile first to download the PDF');
             return;
@@ -2419,10 +3302,15 @@ const EditorController = {
     },
 
     async loadPDF(pdfPath) {
+        if (this.isLocalProject()) {
+            showToast('PDF preview requires a server project');
+            return;
+        }
+
         // The path returned is absolute server path. We need to fetch via API.
         // Endpoint: /api/project/file/{filename}
         const filename = pdfPath.split(/[\\/]/).pop();
-        const url = `${API_BASE}/api/project/file/${filename}`;
+        const url = this.withProjectParam(`${API_BASE}/api/project/file/${filename}`);
 
         this.elements.pdfContainer.innerHTML = ''; // Clear
         this.state.currentPreviewPage = 1;
@@ -2830,7 +3718,7 @@ const EditorController = {
 
     loadHistory() {
         try {
-            const saved = localStorage.getItem('paperreader_history');
+            const saved = localStorage.getItem(this.getProjectStorageKey('paperreader_history'));
             this.state.editHistory = saved ? JSON.parse(saved) : [];
         } catch (e) {
             this.state.editHistory = [];
@@ -2854,7 +3742,7 @@ const EditorController = {
         }
 
         try {
-            localStorage.setItem('paperreader_history', JSON.stringify(this.state.editHistory));
+            localStorage.setItem(this.getProjectStorageKey('paperreader_history'), JSON.stringify(this.state.editHistory));
         } catch (e) {
             console.warn('Failed to save history to localStorage');
         }
@@ -3183,6 +4071,341 @@ const EditorController = {
 
         pageEl.appendChild(marker);
         setTimeout(() => marker.remove(), 2500);
+    }
+};
+
+/**
+ * Team Chat Controller - multi-user chat panel
+ */
+const TeamChatController = {
+    isOpen: false,
+    messages: [],
+    channel: null,
+    channelName: null,
+    participants: new Map(),
+    presenceUsers: [],
+    projectId: 'default',
+    projectName: 'PROJECT',
+    elements: {
+        fab: null,
+        panel: null,
+        backdrop: null,
+        messages: null,
+        input: null,
+        send: null,
+        close: null,
+        usersBtn: null,
+        usersPanel: null,
+        usersList: null,
+        userCount: null,
+        projectLabel: null
+    },
+
+    init() {
+        this.cacheElements();
+        if (!this.elements.fab || !this.elements.panel) return;
+        this.bindEvents();
+        this.setProject(ProjectManager.activeProject);
+        window.addEventListener('resize', () => {
+            if (this.isOpen) this.positionPanel();
+        });
+    },
+
+    cacheElements() {
+        this.elements.fab = document.getElementById('teamchat-fab');
+        this.elements.panel = document.getElementById('teamchat-panel');
+        this.elements.backdrop = document.getElementById('teamchat-backdrop');
+        this.elements.messages = document.getElementById('teamchat-messages');
+        this.elements.input = document.getElementById('teamchat-input');
+        this.elements.send = document.getElementById('teamchat-send');
+        this.elements.close = document.getElementById('teamchat-close');
+        this.elements.usersBtn = document.getElementById('teamchat-users');
+        this.elements.usersPanel = document.getElementById('teamchat-users-panel');
+        this.elements.usersList = document.getElementById('teamchat-user-list');
+        this.elements.userCount = document.getElementById('teamchat-user-count');
+        this.elements.projectLabel = document.getElementById('teamchat-project');
+    },
+
+    bindEvents() {
+        this.elements.fab?.addEventListener('click', () => this.toggle());
+        this.elements.close?.addEventListener('click', () => this.close());
+        this.elements.backdrop?.addEventListener('click', () => this.close());
+        this.elements.send?.addEventListener('click', () => this.sendMessage());
+        this.elements.input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendMessage();
+            }
+        });
+        this.elements.usersBtn?.addEventListener('click', () => this.toggleUsersPanel());
+    },
+
+    toggle() {
+        if (this.isOpen) {
+            this.close();
+        } else {
+            this.open();
+        }
+    },
+
+    open() {
+        this.isOpen = true;
+        this.elements.panel?.classList.add('open');
+        this.elements.fab?.classList.add('active');
+        this.elements.backdrop?.classList.add('visible');
+        this.positionPanel();
+        if (!this.isMobileView()) {
+            this.elements.input?.focus();
+        }
+    },
+
+    close() {
+        this.isOpen = false;
+        this.elements.panel?.classList.remove('open');
+        this.elements.fab?.classList.remove('active');
+        this.elements.backdrop?.classList.remove('visible');
+        if (this.elements.usersPanel) {
+            this.elements.usersPanel.style.display = 'none';
+        }
+    },
+
+    isMobileView() {
+        return window.matchMedia('(max-width: 480px)').matches;
+    },
+
+    positionPanel() {
+        if (!this.elements.panel || !this.elements.fab) return;
+        const panel = this.elements.panel;
+        const fab = this.elements.fab;
+
+        if (this.isMobileView()) {
+            panel.style.left = '0';
+            panel.style.right = '0';
+            panel.style.bottom = '0';
+            panel.style.top = 'auto';
+            return;
+        }
+
+        const rect = fab.getBoundingClientRect();
+        const panelWidth = panel.offsetWidth || 380;
+        let left = rect.left - 10;
+        let top = rect.bottom + 12;
+
+        if (left + panelWidth > window.innerWidth - 20) {
+            left = window.innerWidth - panelWidth - 20;
+        }
+        if (left < 20) left = 20;
+
+        if (top + panel.offsetHeight > window.innerHeight - 20) {
+            top = window.innerHeight - panel.offsetHeight - 20;
+            if (top < rect.top) {
+                top = rect.top - panel.offsetHeight - 12;
+            }
+        }
+
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+    },
+
+    setProject(project) {
+        this.projectId = project?.id || 'default';
+        this.projectName = project?.name || 'PROJECT';
+        this.participants = new Map();
+        this.updateProjectLabel();
+        this.loadMessages();
+        this.renderMessages();
+        this.initChannel();
+        this.refreshUserList();
+    },
+
+    updateProjectLabel() {
+        if (this.elements.projectLabel) {
+            this.elements.projectLabel.textContent = this.truncateLabel(this.projectName.toUpperCase(), 18);
+        }
+    },
+
+    truncateLabel(text, maxLen) {
+        if (!text) return '';
+        if (text.length <= maxLen) return text;
+        return `${text.slice(0, maxLen - 3)}...`;
+    },
+
+    getStorageKey() {
+        return `paperreader_chat_${this.projectId || 'default'}`;
+    },
+
+    loadMessages() {
+        try {
+            const saved = localStorage.getItem(this.getStorageKey());
+            this.messages = saved ? JSON.parse(saved) : [];
+            this.messages = this.messages.map(message => ({
+                ...message,
+                projectId: message.projectId || this.projectId
+            }));
+            this.messages.sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+        } catch (e) {
+            this.messages = [];
+        }
+    },
+
+    saveMessages() {
+        try {
+            localStorage.setItem(this.getStorageKey(), JSON.stringify(this.messages));
+        } catch (e) {
+            console.warn('Failed to save chat history');
+        }
+    },
+
+    addMessage(message, fromChannel = false) {
+        if (!message || message.projectId !== this.projectId) return;
+        if (this.messages.find(msg => msg.id === message.id)) return;
+        this.messages.push(message);
+        if (this.messages.length > 200) {
+            this.messages = this.messages.slice(-200);
+        }
+        if (!fromChannel) {
+            this.broadcast({ type: 'message', projectId: this.projectId, message });
+        }
+        this.saveMessages();
+        this.trackParticipant(message);
+        this.renderMessages();
+    },
+
+    renderMessages() {
+        if (!this.elements.messages) return;
+        const currentUser = this.getCurrentUser();
+        const currentId = currentUser?.id || currentUser?.name;
+        if (!this.messages.length) {
+            this.elements.messages.innerHTML = '<div class="teamchat-empty">No messages yet. Say hello!</div>';
+            return;
+        }
+        this.elements.messages.innerHTML = this.messages.map(message => {
+            const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const isSelf = message.userId && currentId && message.userId === currentId;
+            const name = message.userName || message.user || 'Guest';
+            const safeBody = escapeHtml(message.text).replace(/\n/g, '<br>');
+            return `
+                <div class="teamchat-message ${isSelf ? 'self' : ''}">
+                    <div class="meta">
+                        <span>${escapeHtml(name)}</span>
+                        <span>${time}</span>
+                    </div>
+                    <div class="body">${safeBody}</div>
+                </div>
+            `;
+        }).join('');
+        this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+    },
+
+    sendMessage() {
+        const input = this.elements.input;
+        const text = (input?.value || '').trim();
+        if (!text) return;
+        const user = this.getCurrentUser();
+        const message = {
+            id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+            projectId: this.projectId,
+            userId: user?.id || user?.name || 'guest',
+            userName: user?.name || 'Guest',
+            avatar: user?.avatar || '',
+            text,
+            timestamp: new Date().toISOString()
+        };
+        this.addMessage(message);
+        if (input) input.value = '';
+    },
+
+    initChannel() {
+        this.closeChannel();
+        if (!('BroadcastChannel' in window)) return;
+        this.channelName = `paperreader-chat-${this.projectId}`;
+        this.channel = new BroadcastChannel(this.channelName);
+        this.channel.onmessage = (event) => this.handleChannelMessage(event.data);
+        this.broadcastPresence();
+    },
+
+    closeChannel() {
+        if (this.channel) {
+            this.channel.close();
+            this.channel = null;
+        }
+    },
+
+    broadcast(payload) {
+        if (!this.channel) return;
+        this.channel.postMessage(payload);
+    },
+
+    broadcastPresence() {
+        const user = this.getCurrentUser();
+        if (!user) return;
+        this.broadcast({ type: 'presence', projectId: this.projectId, user });
+    },
+
+    handleChannelMessage(data) {
+        if (!data || data.projectId !== this.projectId) return;
+        if (data.type === 'message') {
+            this.addMessage(data.message, true);
+        }
+        if (data.type === 'presence') {
+            this.trackParticipant(data.user);
+            this.refreshUserList();
+        }
+    },
+
+    trackParticipant(messageOrUser) {
+        const user = messageOrUser?.userName || messageOrUser?.user ? {
+            id: messageOrUser.userId || messageOrUser.user || messageOrUser.userName,
+            name: messageOrUser.userName || messageOrUser.user,
+            avatar: messageOrUser.avatar
+        } : messageOrUser;
+        if (!user || !user.name) return;
+        this.participants.set(user.id || user.name, user);
+        this.refreshUserList();
+    },
+
+    toggleUsersPanel() {
+        if (!this.elements.usersPanel) return;
+        const isVisible = this.elements.usersPanel.style.display === 'block';
+        this.elements.usersPanel.style.display = isVisible ? 'none' : 'block';
+    },
+
+    updateUsersFromPresence(users) {
+        this.presenceUsers = users || [];
+        this.refreshUserList();
+    },
+
+    refreshUserList() {
+        if (!this.elements.usersList || !this.elements.userCount) return;
+        const list = this.presenceUsers.length
+            ? this.presenceUsers.map(user => ({ name: user.name, id: user.name }))
+            : Array.from(this.participants.values());
+
+        this.elements.userCount.textContent = list.length.toString();
+        if (!list.length) {
+            this.elements.usersList.innerHTML = '<div class="outline-empty">No users yet</div>';
+            return;
+        }
+        this.elements.usersList.innerHTML = list.map(user => `
+            <div class="teamchat-user">
+                <i class="bi bi-person-circle"></i>
+                <span>${escapeHtml(user.name)}</span>
+            </div>
+        `).join('');
+    },
+
+    refreshUser() {
+        this.broadcastPresence();
+        this.refreshUserList();
+    },
+
+    getCurrentUser() {
+        const authProfile = AuthController.getPresenceProfile();
+        if (authProfile) return authProfile;
+        if (PresenceController?.user) return PresenceController.user;
+        return { name: 'Guest', id: 'guest' };
     }
 };
 
@@ -3990,4 +5213,5 @@ const CopilotController = {
 function setupEditor() {
     EditorController.init();
     CopilotController.init();
+    TeamChatController.init();
 }

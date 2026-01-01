@@ -37,6 +37,22 @@
                     <span class="tagline">// ACADEMIC ARCHIVE v1.0</span>
                 </div>
             </div>
+            <div class="header-actions">
+                <button class="header-action" id="btn-projects" title="Projects">
+                    <i class="bi bi-collection"></i>
+                    <span class="action-text">
+                        <span class="action-label">PROJECT</span>
+                        <span class="action-value" id="active-project-name">SERVER</span>
+                    </span>
+                </button>
+                <button class="header-action" id="btn-auth" title="Account">
+                    <i class="bi bi-person-circle"></i>
+                    <span class="action-text">
+                        <span class="action-label" id="auth-label">SIGN IN</span>
+                        <span class="action-value" id="auth-subtitle">GUEST</span>
+                    </span>
+                </button>
+            </div>
             <div class="header-stats">
                 <div class="nav-tabs">
                     <button class="nav-tab active" id="tab-library">LIBRARY</button>
@@ -379,6 +395,85 @@
         </div>
     </div>
 
+    <!-- Projects Modal -->
+    <div class="overlay-modal project-modal" id="project-modal" style="display: none;">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-content">
+            <div class="overlay-header">
+                <h3><i class="bi bi-collection"></i> Projects</h3>
+                <button class="btn-find-close" id="project-close">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+            <div class="overlay-body">
+                <div class="project-create">
+                    <input type="text" id="project-name-input" placeholder="New project name...">
+                    <select id="project-type-select">
+                        <option value="local">Local Project</option>
+                        <option value="remote">Server Project</option>
+                    </select>
+                    <button class="btn-tool btn-small" id="project-create">
+                        <i class="bi bi-plus-lg"></i> CREATE
+                    </button>
+                </div>
+                <div class="project-list" id="project-list">
+                    <!-- Projects populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Auth Modal -->
+    <div class="overlay-modal auth-modal" id="auth-modal" style="display: none;">
+        <div class="overlay-backdrop"></div>
+        <div class="overlay-content">
+            <div class="overlay-header">
+                <h3><i class="bi bi-person-badge"></i> Account</h3>
+                <button class="btn-find-close" id="auth-close">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+            <div class="overlay-body">
+                <div class="auth-tabs">
+                    <button class="auth-tab active" id="auth-tab-login">SIGN IN</button>
+                    <button class="auth-tab" id="auth-tab-register">REGISTER</button>
+                </div>
+                <div class="auth-panel active" id="auth-panel-login">
+                    <label for="auth-login-email">Email</label>
+                    <input type="email" id="auth-login-email" placeholder="you@example.com">
+                    <label for="auth-login-password">Password</label>
+                    <input type="password" id="auth-login-password" placeholder="********">
+                    <button class="btn-tool btn-primary" id="auth-login-submit">
+                        <i class="bi bi-box-arrow-in-right"></i> SIGN IN
+                    </button>
+                </div>
+                <div class="auth-panel" id="auth-panel-register">
+                    <label for="auth-register-name">Display Name</label>
+                    <input type="text" id="auth-register-name" placeholder="Dr. Retro Scholar">
+                    <label for="auth-register-email">Email</label>
+                    <input type="email" id="auth-register-email" placeholder="you@example.com">
+                    <label for="auth-register-password">Password</label>
+                    <input type="password" id="auth-register-password" placeholder="Create a password">
+                    <button class="btn-tool btn-primary" id="auth-register-submit">
+                        <i class="bi bi-person-plus"></i> CREATE ACCOUNT
+                    </button>
+                </div>
+                <div class="auth-panel" id="auth-panel-account">
+                    <div class="auth-account-card">
+                        <div class="auth-account-avatar"><i class="bi bi-person-circle"></i></div>
+                        <div class="auth-account-info">
+                            <div class="auth-account-name" id="auth-account-name">Guest</div>
+                            <div class="auth-account-email" id="auth-account-email">Not signed in</div>
+                        </div>
+                    </div>
+                    <button class="btn-tool btn-danger" id="auth-logout">
+                        <i class="bi bi-box-arrow-right"></i> SIGN OUT
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- PDF Viewer Modal -->
     <div class="modal" id="pdf-modal">
         <div class="modal-backdrop"></div>
@@ -426,6 +521,44 @@
                     <iframe id="pdf-viewer" src=""></iframe>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Team Chat -->
+    <div class="teamchat-fab" id="teamchat-fab" title="Team Chat">
+        <i class="bi bi-chat-dots"></i>
+    </div>
+    <div class="teamchat-backdrop" id="teamchat-backdrop"></div>
+    <div class="teamchat-panel" id="teamchat-panel">
+        <div class="teamchat-header">
+            <div class="teamchat-title">
+                <i class="bi bi-chat-square-dots"></i>
+                <span>Team Chat</span>
+                <span class="teamchat-project" id="teamchat-project">PROJECT</span>
+            </div>
+            <div class="teamchat-controls">
+                <button class="teamchat-btn" id="teamchat-users" title="Show users">
+                    <i class="bi bi-people"></i>
+                </button>
+                <button class="teamchat-btn" id="teamchat-close" title="Close">
+                    <i class="bi bi-dash-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div class="teamchat-users" id="teamchat-users-panel" style="display: none;">
+            <div class="teamchat-users-title">
+                <i class="bi bi-wifi"></i>
+                <span>Online</span>
+                <span class="teamchat-count" id="teamchat-user-count">0</span>
+            </div>
+            <div class="teamchat-user-list" id="teamchat-user-list"></div>
+        </div>
+        <div class="teamchat-messages" id="teamchat-messages"></div>
+        <div class="teamchat-input-area">
+            <input type="text" id="teamchat-input" placeholder="Message your team...">
+            <button class="teamchat-send" id="teamchat-send">
+                <i class="bi bi-send-fill"></i>
+            </button>
         </div>
     </div>
 

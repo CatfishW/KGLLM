@@ -237,6 +237,66 @@ body {
     gap: 1.5rem;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.header-action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.55rem 0.8rem;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 255, 255, 0.35);
+    background: rgba(0, 255, 255, 0.08);
+    color: var(--neon-cyan);
+    font-family: var(--font-pixel);
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    box-shadow: 0 8px 18px rgba(0, 255, 255, 0.12);
+    cursor: pointer;
+}
+
+.header-action i {
+    font-size: 1rem;
+}
+
+.header-action .action-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+}
+
+.header-action .action-label {
+    font-size: 0.5rem;
+    color: var(--text-secondary);
+    letter-spacing: 2px;
+}
+
+.header-action .action-value {
+    font-size: 0.6rem;
+    color: var(--neon-cyan);
+}
+
+.header-action:hover {
+    background: rgba(0, 255, 255, 0.16);
+    box-shadow: 0 0 20px rgba(0, 255, 255, 0.25);
+}
+
+.header-action.signed-in {
+    border-color: rgba(57, 255, 20, 0.6);
+    color: var(--neon-green);
+    background: rgba(57, 255, 20, 0.12);
+}
+
+.header-action.signed-in .action-value {
+    color: var(--neon-green);
+}
+
 .stat-box {
     background: var(--bg-card);
     border: 1px solid var(--border-color);
@@ -2793,6 +2853,497 @@ body {
 }
 
 /* ============================================
+   PROJECTS + AUTH MODALS
+   ============================================ */
+
+.overlay-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 12000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.overlay-modal.active {
+    display: flex;
+}
+
+.overlay-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    backdrop-filter: blur(5px);
+}
+
+.overlay-content {
+    position: relative;
+    width: 92%;
+    max-width: 640px;
+    max-height: 85vh;
+    background: var(--bg-card);
+    border: 2px solid var(--neon-cyan);
+    border-radius: 10px;
+    box-shadow: 0 0 40px rgba(0, 255, 255, 0.2);
+    display: flex;
+    flex-direction: column;
+    animation: modal-in 0.2s ease;
+}
+
+.overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    background: var(--bg-darker);
+    border-bottom: 1px solid var(--border-color);
+    border-radius: 8px 8px 0 0;
+}
+
+.overlay-header h3 {
+    font-family: var(--font-pixel);
+    font-size: 0.8rem;
+    color: var(--neon-cyan);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.overlay-body {
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow: auto;
+}
+
+.auth-modal .overlay-content {
+    border-color: var(--neon-magenta);
+    box-shadow: 0 0 40px rgba(255, 0, 255, 0.2);
+}
+
+.auth-modal .overlay-header h3 {
+    color: var(--neon-magenta);
+}
+
+.project-create {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.project-create input,
+.project-create select {
+    flex: 1;
+    min-width: 160px;
+    background: var(--bg-darker);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: var(--text-primary);
+    font-family: var(--font-retro);
+}
+
+.project-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.project-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: rgba(0, 255, 255, 0.06);
+}
+
+.project-item.active {
+    border-color: rgba(0, 255, 255, 0.6);
+    background: rgba(0, 255, 255, 0.16);
+}
+
+.project-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.project-name {
+    font-size: 0.9rem;
+    color: #f3f6ff;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.project-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+
+.project-tag {
+    padding: 2px 6px;
+    border-radius: 999px;
+    border: 1px solid rgba(0, 255, 255, 0.4);
+    color: var(--neon-cyan);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    font-size: 0.55rem;
+}
+
+.project-tag.local {
+    border-color: rgba(57, 255, 20, 0.6);
+    color: var(--neon-green);
+}
+
+.project-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.auth-tabs {
+    display: flex;
+    gap: 8px;
+}
+
+.auth-tab {
+    background: rgba(255, 0, 255, 0.08);
+    border: 1px solid rgba(255, 0, 255, 0.3);
+    color: #f6d6ff;
+    font-family: var(--font-retro);
+    font-size: 0.75rem;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.auth-tab.active {
+    background: linear-gradient(135deg, rgba(255, 0, 255, 0.75), rgba(255, 20, 147, 0.9));
+    color: #070710;
+    border-color: transparent;
+}
+
+.auth-panel {
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.auth-panel.active {
+    display: flex;
+}
+
+.auth-panel label {
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+.auth-panel input {
+    background: var(--bg-darker);
+    border: 1px solid var(--border-color);
+    color: var(--text-primary);
+    border-radius: 6px;
+    padding: 10px;
+    font-family: var(--font-retro);
+}
+
+.auth-account-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: rgba(255, 0, 255, 0.08);
+    border: 1px solid rgba(255, 0, 255, 0.2);
+    border-radius: 8px;
+    padding: 12px;
+}
+
+.auth-account-avatar {
+    font-size: 2rem;
+    color: var(--neon-magenta);
+}
+
+.auth-account-name {
+    font-size: 1rem;
+    color: #f3f0ff;
+}
+
+.auth-account-email {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* ============================================
+   TEAM CHAT
+   ============================================ */
+
+.teamchat-fab {
+    position: fixed;
+    bottom: 80px;
+    left: 30px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--neon-magenta) 0%, var(--neon-pink) 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    z-index: 9998;
+    box-shadow: 0 4px 20px rgba(255, 0, 255, 0.4);
+    transition: transform 0.25s ease, box-shadow 0.25s ease, opacity 0.25s ease;
+    animation: fab-pulse-magenta 3s ease-in-out infinite;
+    touch-action: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.teamchat-fab i {
+    font-size: 1.4rem;
+    color: var(--bg-dark);
+}
+
+.teamchat-fab.active {
+    transform: scale(0.95);
+    opacity: 0.85;
+}
+
+.teamchat-fab:hover {
+    transform: scale(1.1);
+    box-shadow: 0 6px 30px rgba(255, 0, 255, 0.6);
+}
+
+@keyframes fab-pulse-magenta {
+    0%,
+    100% {
+        box-shadow: 0 4px 20px rgba(255, 0, 255, 0.4);
+    }
+    50% {
+        box-shadow: 0 4px 30px rgba(255, 0, 255, 0.7);
+    }
+}
+
+.teamchat-panel {
+    position: fixed;
+    width: 380px;
+    height: 520px;
+    background: var(--bg-card);
+    border: 2px solid var(--neon-magenta);
+    border-radius: 12px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 10px 45px rgba(255, 0, 255, 0.25);
+    overflow: hidden;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(20px) scale(0.96);
+    transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1), visibility 0.25s;
+    pointer-events: none;
+    transform-origin: bottom left;
+}
+
+.teamchat-panel.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+.teamchat-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(5, 5, 8, 0.55);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.25s ease, visibility 0.25s;
+    z-index: 9997;
+    pointer-events: none;
+}
+
+.teamchat-backdrop.visible {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.teamchat-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px;
+    background: linear-gradient(135deg, rgba(255, 0, 255, 0.15) 0%, rgba(255, 20, 147, 0.15) 100%);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.teamchat-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-pixel);
+    font-size: 0.7rem;
+    color: var(--neon-magenta);
+}
+
+.teamchat-project {
+    font-family: var(--font-retro);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+}
+
+.teamchat-controls {
+    display: flex;
+    gap: 6px;
+}
+
+.teamchat-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 0, 255, 0.3);
+    background: rgba(255, 0, 255, 0.08);
+    color: var(--neon-magenta);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.teamchat-btn:hover {
+    background: rgba(255, 0, 255, 0.2);
+}
+
+.teamchat-users {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(10, 10, 18, 0.9);
+}
+
+.teamchat-users-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
+.teamchat-count {
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: rgba(255, 0, 255, 0.2);
+    color: var(--neon-magenta);
+    font-size: 0.65rem;
+}
+
+.teamchat-user-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.teamchat-user {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    border-radius: 999px;
+    background: rgba(255, 0, 255, 0.12);
+    color: #f5d4ff;
+    font-size: 0.7rem;
+}
+
+.teamchat-messages {
+    flex: 1;
+    padding: 12px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.teamchat-empty {
+    padding: 18px;
+    text-align: center;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.teamchat-message {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    background: rgba(255, 0, 255, 0.1);
+    border: 1px solid rgba(255, 0, 255, 0.2);
+    max-width: 85%;
+}
+
+.teamchat-message.self {
+    align-self: flex-end;
+    background: rgba(57, 255, 20, 0.12);
+    border-color: rgba(57, 255, 20, 0.4);
+}
+
+.teamchat-message .meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.65rem;
+    color: var(--text-secondary);
+}
+
+.teamchat-message .body {
+    font-size: 0.9rem;
+    color: #f1f0ff;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.teamchat-input-area {
+    padding: 12px;
+    display: flex;
+    gap: 8px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(8, 8, 14, 0.95);
+}
+
+.teamchat-input-area input {
+    flex: 1;
+    background: #0c0c15;
+    border: 1px solid rgba(255, 0, 255, 0.2);
+    color: var(--text-primary);
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-family: var(--font-retro);
+}
+
+.teamchat-send {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    border: 1px solid rgba(255, 0, 255, 0.4);
+    background: linear-gradient(135deg, rgba(255, 0, 255, 0.8), rgba(255, 20, 147, 0.9));
+    color: #050508;
+    cursor: pointer;
+}
+
+/* ============================================
    AI COPILOT STYLES
    ============================================ */
 
@@ -3617,6 +4168,18 @@ body {
         gap: 0.75rem;
     }
 
+    .header-actions {
+        width: 100%;
+        justify-content: center;
+        flex-wrap: wrap;
+    }
+
+    .header-action {
+        flex: 1;
+        min-width: 160px;
+        justify-content: center;
+    }
+
     .logo-section {
         justify-content: center;
     }
@@ -3636,10 +4199,12 @@ body {
 
     .header-stats {
         display: flex;
-        flex-wrap: wrap;
+        flex-wrap: nowrap;
         justify-content: center;
         gap: 0.5rem;
         width: 100%;
+        overflow-x: auto;
+        padding-bottom: 4px;
     }
 
     .nav-tabs {
@@ -4075,6 +4640,24 @@ body {
         padding: 0.75rem;
     }
 
+    .tagline {
+        display: none;
+    }
+
+    .header-actions {
+        gap: 0.4rem;
+    }
+
+    .header-action {
+        padding: 0.4rem 0.6rem;
+        font-size: 0.55rem;
+        min-width: auto;
+    }
+
+    .header-action .action-value {
+        display: none;
+    }
+
     .logo-section {
         gap: 0.5rem;
     }
@@ -4108,6 +4691,8 @@ body {
 
     .presence-list {
         margin: 0 0.25rem;
+        max-width: 120px;
+        overflow: hidden;
     }
 
     .user-avatar {
@@ -4310,6 +4895,19 @@ body {
         max-height: 85vh;
     }
 
+    .overlay-content {
+        width: 96%;
+        max-height: 90vh;
+    }
+
+    .project-create {
+        flex-direction: column;
+    }
+
+    .auth-tabs {
+        flex-wrap: wrap;
+    }
+
     .help-header h2 {
         font-size: 0.75rem;
     }
@@ -4463,6 +5061,29 @@ body {
     .copilot-btn {
         width: 34px;
         height: 34px;
+    }
+
+    /* Team chat on mobile */
+    .teamchat-fab {
+        bottom: 130px;
+        left: 15px;
+        width: 50px;
+        height: 50px;
+    }
+
+    .teamchat-panel {
+        width: 100%;
+        height: 65vh;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        border-radius: 16px 16px 0 0;
+        transform: translateY(100%);
+        transform-origin: bottom center;
+    }
+
+    .teamchat-panel.open {
+        transform: translateY(0);
     }
 
     /* Editor specific mobile styles */
