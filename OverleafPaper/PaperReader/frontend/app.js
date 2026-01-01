@@ -1,0 +1,2765 @@
+/**
+ * PAPER READER - 1980s Electric Pixel Style
+ * Frontend Application with Enhanced Mobile & Desktop Support
+ */
+
+// Configuration - detect environment and set API base URL
+const isLocalDev = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+const API_BASE = isLocalDev
+    ? 'http://127.0.0.1:22222'
+    : `${window.location.protocol}//${window.location.hostname}/paperreader`;
+
+// State
+let papers = [];
+let sortOrder = 'desc';
+let viewMode = 'grid';
+let currentPaper = null;
+let currentPaperIndex = -1;
+let touchStartY = 0;
+let isPulling = false;
+let presenceInterval = null;
+
+// DOM Elements
+const papersGrid = document.getElementById('papers-grid');
+const loading = document.getElementById('loading');
+const emptyState = document.getElementById('empty-state');
+const paperCount = document.getElementById('paper-count');
+const searchInput = document.getElementById('search-input');
+const clearSearch = document.getElementById('clear-search');
+const sortBySelect = document.getElementById('sort-by');
+const sortOrderBtn = document.getElementById('sort-order');
+const viewGridBtn = document.getElementById('view-grid');
+const viewListBtn = document.getElementById('view-list');
+const refreshBtn = document.getElementById('refresh-btn');
+const pdfModal = document.getElementById('pdf-modal');
+const modalTitle = document.getElementById('modal-paper-title');
+const pdfViewer = document.getElementById('pdf-viewer');
+const btnDownload = document.getElementById('btn-download');
+const btnFullscreen = document.getElementById('btn-fullscreen');
+const btnCloseModal = document.getElementById('btn-close-modal');
+const infoYear = document.getElementById('info-year');
+const infoPages = document.getElementById('info-pages');
+const infoSize = document.getElementById('info-size');
+
+/**
+ * Initialize the application
+ */
+async function init() {
+    setupEventListeners();
+    setupMobileInteractions();
+    setupEditor(); // Initialize Editor
+    setupKeyboardShortcuts();
+    setupButtonAnimations();
+    showShortcutsHint();
+    PresenceController.init(); // Initialize Presence tracking
+    await loadPapers();
+}
+
+/**
+ * Setup button click animations (ripple effect and feedback)
+ */
+function setupButtonAnimations() {
+    // Add ripple effect to all buttons
+    document.addEventListener('click', (e) => {
+        const button = e.target.closest('button, .btn-view, .nav-tab, .file-item');
+        if (!button) return;
+
+        // Create ripple element
+        const ripple = document.createElement('span');
+        ripple.className = 'btn-ripple';
+
+        const rect = button.getBoundingClientRect();
+        const size = Math.max(rect.width, rect.height);
+        const x = e.clientX - rect.left - size / 2;
+        const y = e.clientY - rect.top - size / 2;
+
+        ripple.style.cssText = `
+            position: absolute;
+            width: ${size}px;
+            height: ${size}px;
+            left: ${x}px;
+            top: ${y}px;
+            background: radial-gradient(circle, rgba(255,255,255,0.4) 0%, transparent 70%);
+            border-radius: 50%;
+            transform: scale(0);
+            animation: btn-ripple-anim 0.4s ease-out forwards;
+            pointer-events: none;
+        `;
+
+        // Ensure button has relative positioning
+        const computedStyle = window.getComputedStyle(button);
+        if (computedStyle.position === 'static') {
+            button.style.position = 'relative';
+        }
+        button.style.overflow = 'hidden';
+
+        button.appendChild(ripple);
+
+        // Clean up ripple after animation
+        setTimeout(() => ripple.remove(), 400);
+    });
+
+    // Add ripple animation keyframes if not already present
+    if (!document.getElementById('ripple-keyframes')) {
+        const style = document.createElement('style');
+        style.id = 'ripple-keyframes';
+        style.textContent = `
+            @keyframes btn-ripple-anim {
+                0% { transform: scale(0); opacity: 1; }
+                100% { transform: scale(2.5); opacity: 0; }
+            }
+        `;
+        document.head.appendChild(style);
+    }
+}
+
+/**
+ * Setup event listeners
+ */
+function setupEventListeners() {
+    // Search
+    let searchTimeout;
+    searchInput.addEventListener('input', (e) => {
+        clearTimeout(searchTimeout);
+        clearSearch.classList.toggle('visible', e.target.value.length > 0);
+        searchTimeout = setTimeout(() => loadPapers(), 300);
+    });
+
+    clearSearch.addEventListener('click', () => {
+        searchInput.value = '';
+        clearSearch.classList.remove('visible');
+        loadPapers();
+    });
+
+    // Sort
+    sortBySelect.addEventListener('change', () => loadPapers());
+
+    sortOrderBtn.addEventListener('click', () => {
+        sortOrder = sortOrder === 'desc' ? 'asc' : 'desc';
+        const icon = sortOrderBtn.querySelector('i');
+        icon.className = sortOrder === 'desc' ? 'bi bi-sort-down' : 'bi bi-sort-up';
+        loadPapers();
+    });
+
+    // View mode
+    viewGridBtn.addEventListener('click', () => setViewMode('grid'));
+    viewListBtn.addEventListener('click', () => setViewMode('list'));
+
+    // Refresh
+    refreshBtn.addEventListener('click', () => {
+        refreshBtn.querySelector('i').style.animation = 'spin 0.5s linear';
+        setTimeout(() => {
+            refreshBtn.querySelector('i').style.animation = '';
+        }, 500);
+        loadPapers();
+    });
+
+    // Modal
+    btnCloseModal.addEventListener('click', closeModal);
+    pdfModal.querySelector('.modal-backdrop').addEventListener('click', closeModal);
+
+    btnDownload.addEventListener('click', downloadCurrentPaper);
+
+    btnFullscreen.addEventListener('click', toggleFullscreen);
+
+    // Navigation buttons
+    const btnPrev = document.getElementById('btn-prev');
+    const btnNext = document.getElementById('btn-next');
+
+    if (btnPrev) {
+        btnPrev.addEventListener('click', () => navigatePaper(-1));
+    }
+    if (btnNext) {
+        btnNext.addEventListener('click', () => navigatePaper(1));
+    }
+}
+
+/**
+ * Setup mobile touch interactions
+ */
+function setupMobileInteractions() {
+    // Pull to refresh
+    let pullIndicator = document.createElement('div');
+    pullIndicator.className = 'pull-to-refresh';
+    pullIndicator.innerHTML = '<i class="bi bi-arrow-down-circle"></i> <span>Pull to refresh</span>';
+    document.body.insertBefore(pullIndicator, document.body.firstChild);
+
+    document.addEventListener('touchstart', (e) => {
+        if (window.scrollY === 0 && !pdfModal.classList.contains('active')) {
+            touchStartY = e.touches[0].clientY;
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchmove', (e) => {
+        if (touchStartY === 0 || pdfModal.classList.contains('active')) return;
+
+        const touchY = e.touches[0].clientY;
+        const diff = touchY - touchStartY;
+
+        if (diff > 50 && window.scrollY === 0) {
+            isPulling = true;
+            pullIndicator.classList.add('active');
+            pullIndicator.style.transform = `translateY(${Math.min(diff - 50, 60)}px)`;
+        }
+    }, { passive: true });
+
+    document.addEventListener('touchend', () => {
+        if (isPulling) {
+            pullIndicator.classList.remove('active');
+            pullIndicator.style.transform = '';
+            loadPapers();
+            showToast('Refreshing papers...');
+        }
+        touchStartY = 0;
+        isPulling = false;
+    });
+
+    // Swipe to navigate in modal
+    let modalTouchStartX = 0;
+
+    pdfModal.addEventListener('touchstart', (e) => {
+        modalTouchStartX = e.touches[0].clientX;
+    }, { passive: true });
+
+    pdfModal.addEventListener('touchend', (e) => {
+        if (!pdfModal.classList.contains('active')) return;
+
+        const touchEndX = e.changedTouches[0].clientX;
+        const diff = touchEndX - modalTouchStartX;
+
+        // Swipe threshold
+        if (Math.abs(diff) > 100) {
+            if (diff > 0) {
+                // Swipe right - previous paper
+                navigatePaper(-1);
+            } else {
+                // Swipe left - next paper
+                navigatePaper(1);
+            }
+        }
+    });
+
+    // Double tap to zoom (for mobile PDF viewing)
+    let lastTap = 0;
+    pdfModal.addEventListener('touchend', (e) => {
+        const currentTime = new Date().getTime();
+        const tapLength = currentTime - lastTap;
+
+        if (tapLength < 300 && tapLength > 0) {
+            toggleFullscreen();
+        }
+        lastTap = currentTime;
+    });
+}
+
+/**
+ * Setup keyboard shortcuts
+ */
+function setupKeyboardShortcuts() {
+    document.addEventListener('keydown', (e) => {
+        const activeEl = document.activeElement;
+        const tag = activeEl?.tagName?.toLowerCase();
+        const isFormField = ['input', 'textarea', 'select', 'button'].includes(tag) || activeEl?.isContentEditable;
+        const isSearchFocused = activeEl === searchInput;
+        const inEditorView = EditorController?.elements?.editorView?.style.display !== 'none';
+
+        // Global shortcuts
+        if (e.key === 'Escape') {
+            if (pdfModal.classList.contains('active')) {
+                closeModal();
+            } else if (isSearchFocused) {
+                searchInput.blur();
+            }
+            return;
+        }
+
+        // Modal navigation shortcuts
+        if (pdfModal.classList.contains('active')) {
+            switch (e.key) {
+                case 'ArrowLeft':
+                case 'k':
+                case 'K':
+                    e.preventDefault();
+                    navigatePaper(-1);
+                    break;
+                case 'ArrowRight':
+                case 'j':
+                case 'J':
+                    e.preventDefault();
+                    navigatePaper(1);
+                    break;
+                case 'd':
+                case 'D':
+                    e.preventDefault();
+                    downloadCurrentPaper();
+                    break;
+                case 'f':
+                case 'F':
+                    e.preventDefault();
+                    toggleFullscreen();
+                    break;
+            }
+            return;
+        }
+
+        // Editor/library hotkeys (use non-conflicting combo)
+        if (!isFormField) {
+            if (e.ctrlKey && e.shiftKey && (e.key === 'e' || e.key === 'E')) {
+                e.preventDefault();
+                EditorController.switchTab('editor');
+                EditorController.loadFiles();
+                return;
+            }
+
+            if (e.ctrlKey && e.shiftKey && (e.key === 'l' || e.key === 'L')) {
+                e.preventDefault();
+                EditorController.switchTab('library');
+                return;
+            }
+
+            if (inEditorView && e.ctrlKey && e.shiftKey && (e.key === 'd' || e.key === 'D')) {
+                e.preventDefault();
+                EditorController.downloadCompiled();
+                return;
+            }
+        }
+
+        // Don't trigger global shortcuts when typing in form fields or editor
+        if (isFormField) return;
+
+        switch (e.key) {
+            // Search focus
+            case '/':
+                e.preventDefault();
+                searchInput.focus();
+                break;
+
+            // Refresh
+            case 'r':
+            case 'R':
+                e.preventDefault();
+                refreshBtn.click();
+                break;
+
+            // Sort toggle
+            case 's':
+            case 'S':
+                e.preventDefault();
+                sortOrderBtn.click();
+                break;
+
+            // View mode toggle
+            case 'v':
+            case 'V':
+                e.preventDefault();
+                if (viewMode === 'grid') {
+                    setViewMode('list');
+                } else {
+                    setViewMode('grid');
+                }
+                break;
+
+            // Sort by cycling
+            case '1':
+                e.preventDefault();
+                sortBySelect.value = 'year';
+                loadPapers();
+                showToast('Sorted by year');
+                break;
+            case '2':
+                e.preventDefault();
+                sortBySelect.value = 'title';
+                loadPapers();
+                showToast('Sorted by title');
+                break;
+            case '3':
+                e.preventDefault();
+                sortBySelect.value = 'size';
+                loadPapers();
+                showToast('Sorted by size');
+                break;
+
+            // Open first paper
+            case 'Enter':
+                e.preventDefault();
+                if (papers.length > 0) {
+                    openPaper(papers[0].id);
+                }
+                break;
+
+            // Show help
+            case '?':
+            case 'h':
+            case 'H':
+                e.preventDefault();
+                showHelpModal();
+                break;
+
+            // Navigate papers with number keys (1-9 opens that paper)
+            case '0':
+            case '4':
+            case '5':
+            case '6':
+            case '7':
+            case '8':
+            case '9':
+                // Quick open papers 1-9
+                const idx = parseInt(e.key) - 1;
+                if (idx >= 0 && idx < papers.length && idx < 9) {
+                    e.preventDefault();
+                    openPaper(papers[idx].id);
+                }
+                break;
+        }
+    });
+}
+
+/**
+ * Navigate to previous/next paper in modal
+ */
+function navigatePaper(direction) {
+    if (!currentPaper || papers.length === 0) return;
+
+    let newIndex = currentPaperIndex + direction;
+
+    // Wrap around
+    if (newIndex < 0) newIndex = papers.length - 1;
+    if (newIndex >= papers.length) newIndex = 0;
+
+    const newPaper = papers[newIndex];
+    if (newPaper) {
+        openPaper(newPaper.id);
+        showToast(`Paper ${newIndex + 1} of ${papers.length}`);
+    }
+}
+
+/**
+ * Download current paper
+ */
+function downloadCurrentPaper() {
+    if (currentPaper) {
+        const link = document.createElement('a');
+        link.href = `${API_BASE}${currentPaper.pdf_url}/download`;
+        link.download = currentPaper.filename;
+        link.click();
+        showToast('Downloading...');
+    }
+}
+
+/**
+ * Toggle fullscreen
+ */
+function toggleFullscreen() {
+    const container = pdfModal.querySelector('.modal-content');
+    if (document.fullscreenElement) {
+        document.exitFullscreen();
+    } else {
+        container.requestFullscreen().catch(() => {
+            // Fallback for mobile
+            pdfModal.classList.toggle('fullscreen-mode');
+        });
+    }
+}
+
+/**
+ * Show toast notification
+ */
+function showToast(message) {
+    // Remove existing toast
+    const existing = document.querySelector('.toast');
+    if (existing) existing.remove();
+
+    const toast = document.createElement('div');
+    toast.className = 'toast';
+    toast.textContent = message;
+    document.body.appendChild(toast);
+
+    // Trigger animation
+    setTimeout(() => toast.classList.add('show'), 10);
+
+    // Remove after delay
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 2000);
+}
+
+/**
+ * Show shortcuts hint on first load
+ */
+function showShortcutsHint() {
+    const hasSeenHint = localStorage.getItem('paperreader-hint-seen');
+    if (hasSeenHint) return;
+
+    setTimeout(() => {
+        showToast('Press ? for keyboard shortcuts');
+        localStorage.setItem('paperreader-hint-seen', 'true');
+    }, 2000);
+}
+
+/**
+ * Show help modal with keyboard shortcuts
+ */
+function showHelpModal() {
+    // Remove existing help
+    const existing = document.querySelector('.help-modal');
+    if (existing) {
+        existing.remove();
+        return;
+    }
+
+    const helpModal = document.createElement('div');
+    helpModal.className = 'help-modal';
+    helpModal.innerHTML = `
+        <div class="help-backdrop"></div>
+        <div class="help-content">
+            <div class="help-header">
+                <h2><i class="bi bi-keyboard"></i> KEYBOARD SHORTCUTS</h2>
+                <button class="help-close"><i class="bi bi-x-lg"></i></button>
+            </div>
+            <div class="help-body">
+                <div class="shortcut-group">
+                    <h3>NAVIGATION</h3>
+                    <div class="shortcut"><kbd>/</kbd> <span>Focus search</span></div>
+                    <div class="shortcut"><kbd>ESC</kbd> <span>Close modal / Clear focus</span></div>
+                    <div class="shortcut"><kbd>Enter</kbd> <span>Open first paper</span></div>
+                </div>
+                <div class="shortcut-group">
+                    <h3>VIEW CONTROLS</h3>
+                    <div class="shortcut"><kbd>R</kbd> <span>Refresh papers</span></div>
+                    <div class="shortcut"><kbd>V</kbd> <span>Toggle grid/list view</span></div>
+                    <div class="shortcut"><kbd>S</kbd> <span>Toggle sort order</span></div>
+                    <div class="shortcut"><kbd>1</kbd> <span>Sort by year</span></div>
+                    <div class="shortcut"><kbd>2</kbd> <span>Sort by title</span></div>
+                    <div class="shortcut"><kbd>3</kbd> <span>Sort by size</span></div>
+                </div>
+                <div class="shortcut-group">
+                    <h3>PDF VIEWER</h3>
+                    <div class="shortcut"><kbd>←</kbd> / <kbd>K</kbd> <span>Previous paper</span></div>
+                    <div class="shortcut"><kbd>→</kbd> / <kbd>J</kbd> <span>Next paper</span></div>
+                    <div class="shortcut"><kbd>D</kbd> <span>Download PDF</span></div>
+                    <div class="shortcut"><kbd>F</kbd> <span>Toggle fullscreen</span></div>
+                </div>
+                <div class="shortcut-group mobile-hint">
+                    <h3>MOBILE GESTURES</h3>
+                    <div class="shortcut"><span>Pull down</span> <span>Refresh papers</span></div>
+                    <div class="shortcut"><span>Swipe L/R</span> <span>Navigate papers</span></div>
+                    <div class="shortcut"><span>Double tap</span> <span>Toggle fullscreen</span></div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(helpModal);
+
+    // Close handlers
+    helpModal.querySelector('.help-backdrop').addEventListener('click', () => helpModal.remove());
+    helpModal.querySelector('.help-close').addEventListener('click', () => helpModal.remove());
+
+    // Animate in
+    setTimeout(() => helpModal.classList.add('active'), 10);
+}
+
+/**
+ * Load papers from API
+ */
+async function loadPapers() {
+    showLoading(true);
+
+    try {
+        const params = new URLSearchParams({
+            sort_by: sortBySelect.value,
+            sort_order: sortOrder
+        });
+
+        const search = searchInput.value.trim();
+        if (search) {
+            params.append('search', search);
+        }
+
+        const response = await fetch(`${API_BASE}/api/papers?${params}`);
+
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        papers = data.papers;
+        paperCount.textContent = data.total;
+
+        renderPapers();
+    } catch (error) {
+        console.error('Failed to load papers:', error);
+        showError('Failed to connect to server');
+    } finally {
+        showLoading(false);
+    }
+}
+
+/**
+ * Render papers grid
+ */
+function renderPapers() {
+    if (papers.length === 0) {
+        papersGrid.innerHTML = '';
+        emptyState.style.display = 'flex';
+        return;
+    }
+
+    emptyState.style.display = 'none';
+
+    papersGrid.innerHTML = papers.map((paper, index) => `
+        <div class="paper-card" data-id="${paper.id}" data-index="${index}" onclick="openPaper('${paper.id}')">
+            <div class="paper-thumbnail">
+                <i class="bi bi-file-earmark-pdf loading-thumb"></i>
+                ${paper.year ? `<span class="paper-year-badge">${paper.year}</span>` : ''}
+            </div>
+            <div class="paper-info">
+                <h3 class="paper-title" title="${escapeHtml(paper.title)}">${escapeHtml(paper.title)}</h3>
+                <div class="paper-meta">
+                    <span><i class="bi bi-file-earmark"></i> ${paper.pages} pages</span>
+                    <span><i class="bi bi-hdd"></i> ${paper.size_mb} MB</span>
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    // Load thumbnails
+    papers.forEach(paper => {
+        loadThumbnail(paper);
+    });
+}
+
+/**
+ * Load thumbnail for a paper
+ */
+async function loadThumbnail(paper) {
+    const card = document.querySelector(`.paper-card[data-id="${paper.id}"]`);
+    if (!card) return;
+
+    const container = card.querySelector('.paper-thumbnail');
+    const img = new Image();
+
+    img.onload = () => {
+        container.innerHTML = `
+            ${paper.year ? `<span class="paper-year-badge">${paper.year}</span>` : ''}
+        `;
+        container.insertBefore(img, container.firstChild);
+    };
+
+    img.onerror = () => {
+        container.querySelector('.loading-thumb').className = 'bi bi-file-earmark-pdf';
+        container.querySelector('.loading-thumb').style.animation = 'none';
+    };
+
+    img.src = `${API_BASE}${paper.thumbnail_url}`;
+    img.alt = paper.title;
+}
+
+/**
+ * Open paper in modal
+ */
+function openPaper(id) {
+    const index = papers.findIndex(p => p.id === id);
+    const paper = papers[index];
+    if (!paper) return;
+
+    currentPaper = paper;
+    currentPaperIndex = index;
+
+    modalTitle.textContent = paper.title;
+    pdfViewer.src = `${API_BASE}${paper.pdf_url}`;
+
+    infoYear.textContent = paper.year || '-';
+    infoPages.textContent = paper.pages;
+    infoSize.textContent = `${paper.size_mb} MB`;
+
+    pdfModal.classList.add('active');
+    document.body.style.overflow = 'hidden';
+
+    // Hide screen effects for better PDF reading
+    document.querySelector('.scanlines')?.classList.add('hidden');
+    document.querySelector('.crt-flicker')?.classList.add('hidden');
+}
+
+/**
+ * Close modal
+ */
+function closeModal() {
+    pdfModal.classList.remove('active');
+    pdfModal.classList.remove('fullscreen-mode');
+    pdfViewer.src = '';
+    currentPaper = null;
+    currentPaperIndex = -1;
+    document.body.style.overflow = '';
+
+    if (document.fullscreenElement) {
+        document.exitFullscreen();
+    }
+
+    // Restore screen effects
+    document.querySelector('.scanlines')?.classList.remove('hidden');
+    document.querySelector('.crt-flicker')?.classList.remove('hidden');
+}
+
+/**
+ * Set view mode
+ */
+function setViewMode(mode) {
+    viewMode = mode;
+
+    viewGridBtn.classList.toggle('active', mode === 'grid');
+    viewListBtn.classList.toggle('active', mode === 'list');
+
+    papersGrid.classList.toggle('list-view', mode === 'list');
+
+    showToast(`${mode.charAt(0).toUpperCase() + mode.slice(1)} view`);
+}
+
+/**
+ * Show/hide loading state
+ */
+function showLoading(show) {
+    loading.style.display = show ? 'flex' : 'none';
+    papersGrid.style.display = show ? 'none' : 'grid';
+}
+
+/**
+ * Show error message
+ */
+function showError(message) {
+    emptyState.querySelector('h3').textContent = 'CONNECTION ERROR';
+    emptyState.querySelector('p').textContent = message;
+    emptyState.querySelector('i').className = 'bi bi-exclamation-triangle';
+    emptyState.style.display = 'flex';
+    papersGrid.innerHTML = '';
+}
+
+/**
+ * Escape HTML
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+/**
+ * Real-time Presence Controller
+ */
+const PresenceController = {
+    ws: null,
+    user: null,
+    activeUsers: [],
+
+    init() {
+        this.user = this.generateUser();
+        this.connect();
+    },
+
+    generateUser() {
+        // Generate a fun random name if not in local storage
+        let name = localStorage.getItem('paperreader-user-name');
+        if (!name) {
+            const adjectives = ['Electric', 'Pixel', 'Neon', 'Retro', 'Cyber', 'Vintage', 'Turbo', 'Digital', 'Arcade', 'Vector'];
+            const nouns = ['User', 'Editor', 'Hacker', 'Researcher', 'Scholar', 'Writer', 'Reader', 'Pilot', 'Wizard', 'Nova'];
+            name = `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]} #${Math.floor(Math.random() * 900 + 100)}`;
+            localStorage.setItem('paperreader-user-name', name);
+        }
+
+        let avatarSeed = localStorage.getItem('paperreader-user-avatar');
+        if (!avatarSeed) {
+            avatarSeed = Math.floor(Math.random() * 1000);
+            localStorage.setItem('paperreader-user-avatar', avatarSeed);
+        }
+
+        return {
+            name: name,
+            avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${avatarSeed}&backgroundColor=b6e3f4,c0aede,d1d4f9`
+        };
+    },
+
+    connect() {
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        let wsUrl;
+
+        // Use relative path for better proxy compatibility
+        const host = window.location.host;
+        const path = window.location.pathname.replace(/\/$/, ''); // Remove trailing slash
+
+        if (isLocalDev) {
+            wsUrl = `${protocol}//127.0.0.1:22222/ws/presence`;
+        } else {
+            // Path-aware websocket URL
+            if (path.includes('/paperreader')) {
+                // If we are at /paperreader/ or /paperreader, use /paperreader/ws/presence
+                wsUrl = `${protocol}//${host}/paperreader/ws/presence`;
+            } else {
+                wsUrl = `${protocol}//${host}/ws/presence`;
+            }
+        }
+
+        console.log('Connecting to presence websocket...', wsUrl);
+
+        try {
+            this.ws = new WebSocket(wsUrl);
+
+            this.ws.onopen = () => {
+                console.log('Presence websocket connected');
+                this.ws.send(JSON.stringify({
+                    type: 'join',
+                    user: this.user
+                }));
+            };
+
+            this.ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'presence') {
+                        this.updatePresence(data.users, data.count);
+                    }
+                } catch (e) {
+                    console.error('Error parsing presence message', e);
+                }
+            };
+
+            this.ws.onclose = (event) => {
+                console.log('Presence websocket closed', event.code, event.reason);
+                // Don't reconnect if it was a normal closure and we have a clean exit
+                if (event.code !== 1000) {
+                    setTimeout(() => this.connect(), 5000);
+                }
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('Presence websocket error', error);
+                // Reconnect will be handled by onclose
+            };
+        } catch (error) {
+            console.error('Failed to create WebSocket', error);
+            setTimeout(() => this.connect(), 5000);
+        }
+    },
+
+    updatePresence(users, count) {
+        this.activeUsers = users;
+        const listContainer = document.getElementById('presence-list');
+        const userCountSpan = document.getElementById('user-count');
+
+        if (userCountSpan) userCountSpan.textContent = count;
+
+        if (listContainer) {
+            // Re-render the user avatars
+            listContainer.innerHTML = users.map(user => `
+                <div class="user-avatar" title="${escapeHtml(user.name)}">
+                    <img src="${user.avatar}" alt="${escapeHtml(user.name)}" onerror="this.src='https://ui-avatars.com/api/?name=${encodeURIComponent(user.name)}&background=random'">
+                    <div class="user-tooltip">${escapeHtml(user.name)}</div>
+                </div>
+            `).join('');
+        }
+    }
+};
+
+// Initialize
+document.addEventListener('DOMContentLoaded', init);
+
+/**
+ * ==========================================
+ * EDITOR & OVERLEAF LOGIC
+ * ==========================================
+ */
+
+const EditorController = {
+    state: {
+        files: [],
+        currentFile: null,
+        citationMap: {},
+        pdfDoc: null,
+        lastCompiledPdfUrl: null,
+        pdfScale: 1.2,
+        editHistory: [],
+        findMatches: [],
+        currentFindIndex: -1
+    },
+
+    elements: {
+        tabLibrary: document.getElementById('tab-library'),
+        tabEditor: document.getElementById('tab-editor'),
+        libraryView: document.getElementById('library-view'),
+        editorView: document.getElementById('editor-view'),
+        fileList: document.getElementById('file-list'),
+        currentFileName: document.getElementById('current-file-name'),
+        btnCompile: document.getElementById('btn-compile'),
+        btnSave: document.getElementById('btn-save'),
+        btnUpload: document.getElementById('btn-upload'),
+        fileUploadInput: document.getElementById('file-upload-input'),
+        btnDelete: document.getElementById('btn-delete'),
+        codeEditor: document.getElementById('code-editor'),
+        compileStatus: document.getElementById('compile-status'),
+        pdfContainer: document.getElementById('pdf-viewer-container'),
+        btnDownloadCompiled: document.getElementById('btn-download-compiled'),
+        // New elements
+        btnFindTex: document.getElementById('btn-find-tex'),
+        btnFindPdf: document.getElementById('btn-find-pdf'),
+        btnHistory: document.getElementById('btn-history'),
+        btnZoomIn: document.getElementById('btn-zoom-in'),
+        btnZoomOut: document.getElementById('btn-zoom-out'),
+        findBar: document.getElementById('find-bar'),
+        findInput: document.getElementById('find-input'),
+        findCount: document.getElementById('find-count'),
+        findPrev: document.getElementById('find-prev'),
+        findNext: document.getElementById('find-next'),
+        findClose: document.getElementById('find-close'),
+        pdfFindBar: document.getElementById('pdf-find-bar'),
+        pdfFindInput: document.getElementById('pdf-find-input'),
+        pdfFindCount: document.getElementById('pdf-find-count'),
+        pdfFindPrev: document.getElementById('pdf-find-prev'),
+        pdfFindNext: document.getElementById('pdf-find-next'),
+        pdfFindClose: document.getElementById('pdf-find-close'),
+        historyModal: document.getElementById('history-modal'),
+        historyList: document.getElementById('history-list'),
+        historyClose: document.getElementById('history-close'),
+        // Line numbers and resizer
+        lineNumbers: document.getElementById('line-numbers'),
+        btnLineNumbers: document.getElementById('btn-line-numbers'),
+        sourceView: document.getElementById('source-view'),
+        previewView: document.getElementById('preview-view'),
+        editorSidebar: document.querySelector('.editor-sidebar'),
+        btnToggleCitationHighlights: document.getElementById('btn-toggle-citation-highlights'),
+        // Mobile tabs
+        btnShowSource: document.getElementById('btn-show-source'),
+        btnShowPreview: document.getElementById('btn-show-preview'),
+        editorContentArea: document.querySelector('.editor-content-area')
+    },
+
+    async init() {
+        // Tab switching
+        this.elements.tabLibrary.addEventListener('click', () => this.switchTab('library'));
+        this.elements.tabEditor.addEventListener('click', () => this.switchTab('editor'));
+
+        // Compile button
+        // Actions
+        this.elements.btnCompile.addEventListener('click', () => this.compileCurrent());
+        this.elements.btnDownloadCompiled.addEventListener('click', () => this.downloadCompiled());
+        this.elements.btnSave.addEventListener('click', () => this.saveCurrent());
+        this.elements.btnUpload.addEventListener('click', () => this.elements.fileUploadInput.click());
+        this.elements.fileUploadInput.addEventListener('change', (e) => this.handleUpload(e));
+        this.elements.btnDelete.addEventListener('click', () => this.deleteCurrent());
+
+        // Default disabled until first successful compile
+        this.elements.btnDownloadCompiled.disabled = true;
+
+        // Find in TeX
+        this.elements.btnFindTex?.addEventListener('click', () => this.toggleFindBar());
+        this.elements.findClose?.addEventListener('click', () => this.closeFindBar());
+        this.elements.findInput?.addEventListener('input', () => this.performFind());
+        this.elements.findNext?.addEventListener('click', () => this.findNext());
+        this.elements.findPrev?.addEventListener('click', () => this.findPrev());
+
+        // Find in PDF
+        this.elements.btnFindPdf?.addEventListener('click', () => this.togglePdfFindBar());
+        this.elements.pdfFindClose?.addEventListener('click', () => this.closePdfFindBar());
+        this.elements.pdfFindInput?.addEventListener('input', () => this.performPdfFind());
+        this.elements.pdfFindNext?.addEventListener('click', () => this.pdfFindNext());
+        this.elements.pdfFindPrev?.addEventListener('click', () => this.pdfFindPrev());
+
+        // History
+        this.elements.btnHistory?.addEventListener('click', () => this.showHistory());
+        this.elements.historyClose?.addEventListener('click', () => this.closeHistory());
+        this.elements.historyModal?.querySelector('.history-backdrop')?.addEventListener('click', () => this.closeHistory());
+
+        // Zoom
+        this.elements.btnZoomIn?.addEventListener('click', () => this.zoomIn());
+        this.elements.btnZoomOut?.addEventListener('click', () => this.zoomOut());
+        this.elements.btnToggleCitationHighlights?.addEventListener('click', () => {
+            this.elements.previewView.classList.toggle('highlight-citations');
+            const isActive = this.elements.previewView.classList.contains('highlight-citations');
+            this.elements.btnToggleCitationHighlights.classList.toggle('active', isActive);
+            showToast(isActive ? 'Citation highlights enabled' : 'Citation highlights disabled');
+        });
+
+        // Line numbers toggle
+        this.elements.btnLineNumbers?.addEventListener('click', () => this.toggleLineNumbers());
+
+        // Panel resizer
+        this.setupPanelResizer();
+
+        // Sidebar toggle
+        this.elements.btnToggleSidebar?.addEventListener('click', () => {
+            this.elements.editorSidebar.classList.toggle('collapsed');
+        });
+
+        // Mobile Tab switching
+        this.elements.btnShowSource?.addEventListener('click', () => this.switchMobileView('source'));
+        this.elements.btnShowPreview?.addEventListener('click', () => this.switchMobileView('preview'));
+
+        // Initialize mobile view
+        if (window.innerWidth <= 768) {
+            this.switchMobileView('source');
+        }
+
+        // Update line numbers on editor scroll/input
+        this.elements.codeEditor?.addEventListener('scroll', () => this.syncLineNumberScroll());
+        this.elements.codeEditor?.addEventListener('input', () => this.updateLineNumbers());
+        this.elements.codeEditor?.addEventListener('keyup', () => this.updateCurrentLine());
+        this.elements.codeEditor?.addEventListener('click', () => this.updateCurrentLine());
+
+        // Editor shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (this.elements.editorView.style.display !== 'none') {
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                    e.preventDefault();
+                    this.saveAndCompile(); // Auto-compile on save
+                }
+                if ((e.ctrlKey || e.metaKey) && e.key === 'f' && !e.shiftKey) {
+                    e.preventDefault();
+                    this.toggleFindBar();
+                }
+                if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+                    e.preventDefault();
+                    this.togglePdfFindBar();
+                }
+            }
+        });
+
+        // Load history from localStorage
+        this.loadHistory();
+
+        // Load line numbers preference
+        this.loadLineNumbersPreference();
+
+        // Load citation map
+        await this.loadCitationMap();
+    },
+
+    async switchTab(tab) {
+        if (tab === 'library') {
+            this.elements.libraryView.style.display = 'block';
+            this.elements.editorView.style.display = 'none';
+            this.elements.tabLibrary.classList.add('active');
+            this.elements.tabEditor.classList.remove('active');
+            loadPapers();
+            // Show library tools
+            document.querySelector('.toolbar').style.display = 'block';
+        } else {
+            this.elements.libraryView.style.display = 'none';
+            this.elements.editorView.style.display = 'flex';
+            this.elements.tabLibrary.classList.remove('active');
+            this.elements.tabEditor.classList.add('active');
+            this.loadFiles();
+            // Hide library tools
+            document.querySelector('.toolbar').style.display = 'none';
+
+            // On mobile, default to source view when entering editor
+            if (window.innerWidth <= 768) {
+                this.switchMobileView('source');
+            }
+        }
+    },
+
+    switchMobileView(view) {
+        if (view === 'source') {
+            this.elements.editorContentArea.classList.add('show-source');
+            this.elements.editorContentArea.classList.remove('show-preview');
+            this.elements.btnShowSource.classList.add('active');
+            this.elements.btnShowPreview.classList.remove('active');
+        } else {
+            this.elements.editorContentArea.classList.remove('show-source');
+            this.elements.editorContentArea.classList.add('show-preview');
+            this.elements.btnShowSource.classList.remove('active');
+            this.elements.btnShowPreview.classList.add('active');
+
+            // If viewing preview, make sure PDF is rendered
+            if (this.state.lastCompiledPdfUrl) {
+                this.renderPdf(this.state.lastCompiledPdfUrl);
+            }
+        }
+    },
+
+    async loadFiles() {
+        try {
+            const res = await fetch(`${API_BASE}/api/project/files`);
+            const data = await res.json();
+            this.state.files = data.files;
+            this.renderFileList();
+        } catch (e) {
+            console.error("Failed to load files", e);
+        }
+    },
+
+    renderFileList() {
+        this.elements.fileList.innerHTML = '';
+        this.state.files.forEach(file => {
+            const el = document.createElement('div');
+            el.className = `file-item ${this.state.currentFile === file.name ? 'active' : ''}`;
+
+            let icon = 'bi-file-earmark';
+            if (file.type === 'tex') icon = 'bi-file-earmark-code';
+            if (file.type === 'bib') icon = 'bi-file-earmark-text';
+
+            el.innerHTML = `<i class="bi ${icon}"></i> ${file.name}`;
+            el.onclick = () => this.selectFile(file);
+            this.elements.fileList.appendChild(el);
+        });
+    },
+
+    async selectFile(file) {
+        this.state.currentFile = file.name;
+        this.elements.currentFileName.textContent = file.name;
+        this.renderFileList();
+
+        // Enable/Disable controls
+        this.elements.btnSave.disabled = false;
+        this.elements.codeEditor.disabled = false;
+        this.elements.btnDelete.style.display = 'inline-block';
+
+        // Load content
+        try {
+            this.elements.codeEditor.value = "Loading...";
+            const res = await fetch(`${API_BASE}/api/project/content/${file.name}`);
+            if (!res.ok) throw new Error("Failed to load content");
+            const data = await res.json();
+            this.elements.codeEditor.value = data.content;
+
+            // Update line numbers after content loads
+            this.updateLineNumbers();
+        } catch (e) {
+            console.error(e);
+            this.elements.codeEditor.value = "// Error loading content or binary file";
+            this.updateLineNumbers();
+        }
+    },
+
+    async saveCurrent() {
+        if (!this.state.currentFile) return;
+
+        const content = this.elements.codeEditor.value;
+        this.elements.btnSave.innerHTML = '<span class="spinner-small"></span> SAVING...';
+
+        try {
+            const res = await fetch(`${API_BASE}/api/project/save`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: this.state.currentFile,
+                    content: content
+                })
+            });
+
+            if (res.ok) {
+                this.elements.btnSave.innerHTML = '<i class="bi bi-check"></i> SAVED';
+                this.saveToHistory('Saved file', this.state.currentFile);
+                setTimeout(() => {
+                    this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+                }, 2000);
+                return true;
+            } else {
+                throw new Error("Save failed");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Failed to save file");
+            this.elements.btnSave.innerHTML = '<i class="bi bi-floppy"></i> SAVE';
+            return false;
+        }
+    },
+
+    async saveAndCompile() {
+        const saved = await this.saveCurrent();
+        if (saved && this.state.currentFile?.endsWith('.tex')) {
+            showToast('Compiling...');
+            await this.compileCurrent();
+        }
+    },
+
+    async handleUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            this.elements.btnUpload.innerHTML = '<span class="spinner-small"></span>';
+            const res = await fetch(`${API_BASE}/api/project/upload`, {
+                method: 'POST',
+                body: formData
+            });
+
+            if (res.ok) {
+                await this.loadFiles();
+                this.elements.fileUploadInput.value = ''; // Reset
+            } else {
+                alert("Upload failed");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Upload error");
+        } finally {
+            this.elements.btnUpload.innerHTML = '<i class="bi bi-upload"></i>';
+        }
+    },
+
+    async deleteCurrent() {
+        if (!this.state.currentFile) return;
+        if (!confirm(`Are you sure you want to delete ${this.state.currentFile}?`)) return;
+
+        try {
+            const res = await fetch(`${API_BASE}/api/project/file/${this.state.currentFile}`, {
+                method: 'DELETE'
+            });
+
+            if (res.ok) {
+                this.state.currentFile = null;
+                this.elements.currentFileName.textContent = "Select a file...";
+                this.elements.codeEditor.value = "";
+                this.elements.codeEditor.disabled = true;
+                this.elements.btnSave.disabled = true;
+                this.elements.btnDelete.style.display = 'none';
+                await this.loadFiles();
+            } else {
+                alert("Delete failed (File likely protected)");
+            }
+        } catch (e) {
+            console.error(e);
+            alert("Delete error");
+        }
+    },
+
+    async loadCitationMap() {
+        try {
+            const res = await fetch(`${API_BASE}/api/citations/map`);
+            const data = await res.json();
+            this.state.citationMap = data.mapping;
+        } catch (e) {
+            console.error("Failed to load citation map", e);
+        }
+    },
+
+    async compileCurrent() {
+        // Always compile the main tex file usually, or the current one?
+        // Let's assume lam_main_latest.tex is the main one or try to identify it.
+        // For this demo, let's just compile the currently selected file if it is .tex,
+        // otherwise default to 'lam_main_latest.tex' if available.
+
+        let target = this.state.currentFile;
+        // fallback
+        if (!target || !target.endsWith('.tex')) {
+            const main = this.state.files.find(f => f.name.includes('main') && f.name.endsWith('.tex'));
+            target = main ? main.name : null;
+        }
+
+        if (!target) {
+            alert("Please select a .tex file to compile.");
+            return;
+        }
+
+        // Add loading state to compile button
+        this.elements.btnCompile.classList.add('loading');
+        this.elements.btnCompile.innerHTML = '<i class="bi bi-arrow-repeat"></i> <span class="btn-text">COMPILING...</span>';
+
+        this.elements.compileStatus.style.display = 'flex';
+        this.elements.compileStatus.innerHTML = '<span class="spinner-small"></span> Using pdflatex...';
+
+        try {
+            const res = await fetch(`${API_BASE}/api/compile`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename: target })
+            });
+            const result = await res.json();
+
+            if (result.success) {
+                this.elements.compileStatus.innerHTML = '<i class="bi bi-check-circle-fill"></i> Compilation Success';
+                setTimeout(() => {
+                    this.elements.compileStatus.style.display = 'none';
+                }, 3000);
+
+                // Show PDF
+                this.state.lastCompiledPdfUrl = `${API_BASE}/api/project/file/${result.pdf_path.split(/[\\/]/).pop()}`;
+                this.elements.btnDownloadCompiled.disabled = false;
+                this.loadPDF(result.pdf_path); // path on server, need endpoint to fetch
+
+                // Success animation on button
+                this.elements.btnCompile.classList.remove('loading');
+                this.elements.btnCompile.classList.add('success');
+                this.elements.btnCompile.innerHTML = '<i class="bi bi-check-lg"></i> <span class="btn-text">SUCCESS</span>';
+                setTimeout(() => {
+                    this.elements.btnCompile.classList.remove('success');
+                    this.elements.btnCompile.innerHTML = '<i class="bi bi-play-fill"></i> <span class="btn-text">RECOMPILE</span>';
+                }, 2000);
+            } else {
+                this.elements.compileStatus.innerHTML = '<i class="bi bi-x-circle-fill"></i> Detailed Compilation Log in Console';
+                this.elements.compileStatus.style.color = 'var(--error)';
+                console.error("Compilation Log:", result.log);
+                alert("Compilation failed. Check console for logs.");
+                this.state.lastCompiledPdfUrl = null;
+                this.elements.btnDownloadCompiled.disabled = true;
+
+                // Reset button
+                this.elements.btnCompile.classList.remove('loading');
+                this.elements.btnCompile.innerHTML = '<i class="bi bi-play-fill"></i> <span class="btn-text">RECOMPILE</span>';
+            }
+        } catch (e) {
+            this.elements.compileStatus.innerHTML = 'Error';
+            console.error(e);
+            this.state.lastCompiledPdfUrl = null;
+            this.elements.btnDownloadCompiled.disabled = true;
+
+            // Reset button
+            this.elements.btnCompile.classList.remove('loading');
+            this.elements.btnCompile.innerHTML = '<i class="bi bi-play-fill"></i> <span class="btn-text">RECOMPILE</span>';
+        }
+    },
+
+    downloadCompiled() {
+        if (!this.state.lastCompiledPdfUrl) {
+            showToast('Compile first to download the PDF');
+            return;
+        }
+
+        const link = document.createElement('a');
+        link.href = this.state.lastCompiledPdfUrl;
+        link.download = '';
+        link.click();
+        showToast('Downloading compiled PDF...');
+    },
+
+    async loadPDF(pdfPath) {
+        // The path returned is absolute server path. We need to fetch via API.
+        // Endpoint: /api/project/file/{filename}
+        const filename = pdfPath.split(/[\\/]/).pop();
+        const url = `${API_BASE}/api/project/file/${filename}`;
+
+        this.elements.pdfContainer.innerHTML = ''; // Clear
+
+        try {
+            const loadingTask = pdfjsLib.getDocument(url);
+            this.state.pdfDoc = await loadingTask.promise;
+
+            // Render all pages
+            for (let pageNum = 1; pageNum <= this.state.pdfDoc.numPages; pageNum++) {
+                await this.renderPage(pageNum);
+            }
+        } catch (e) {
+            console.error("PDF Render Error", e);
+            this.elements.pdfContainer.innerHTML = '<div style="color:red; padding:20px;">Failed to load PDF</div>';
+        }
+    },
+
+    async renderPage(pageNum) {
+        const page = await this.state.pdfDoc.getPage(pageNum);
+
+        const outputScale = window.devicePixelRatio || 1;
+        const scale = this.state.pdfScale;
+        const viewport = page.getViewport({ scale });
+
+        // Wrapper for page
+        const pageDiv = document.createElement('div');
+        pageDiv.className = 'pdf-page';
+        pageDiv.dataset.pageNumber = pageNum;
+        pageDiv.style.position = 'relative';
+        pageDiv.style.marginBottom = '20px';
+        pageDiv.style.width = `${viewport.width}px`;
+        pageDiv.style.height = `${viewport.height}px`;
+        this.elements.pdfContainer.appendChild(pageDiv);
+
+        // Canvas
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.width = Math.floor(viewport.width * outputScale);
+        canvas.height = Math.floor(viewport.height * outputScale);
+        canvas.style.width = `${viewport.width}px`;
+        canvas.style.height = `${viewport.height}px`;
+        canvas.className = 'pdf-canvas';
+        pageDiv.appendChild(canvas);
+
+        const renderContext = {
+            canvasContext: context,
+            viewport: viewport,
+            transform: [outputScale, 0, 0, outputScale, 0, 0]
+        };
+
+        await page.render(renderContext).promise;
+
+        // Text Layer for selection
+        const textLayerDiv = document.createElement('div');
+        textLayerDiv.className = 'textLayer';
+        textLayerDiv.style.width = `${viewport.width}px`;
+        textLayerDiv.style.height = `${viewport.height}px`;
+        pageDiv.appendChild(textLayerDiv);
+
+        const textContent = await page.getTextContent();
+        await pdfjsLib.renderTextLayer({
+            textContent: textContent,
+            container: textLayerDiv,
+            viewport: viewport,
+            textDivs: []
+        }).promise;
+
+        // SyncTex / Click handler
+        // Double click on text layer to go to source
+        pageDiv.addEventListener('dblclick', (e) => {
+            const rect = pageDiv.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+
+            // Convert viewport coordinates back to PDF points (unscaled)
+            // viewport.convertToPdfPoint(x, y) returns [pdfX, pdfY]
+            // where pdfY is from bottom
+            const [pdfX, pdfY] = viewport.convertToPdfPoint(x, y);
+
+            // SyncTex expects top-down coordinates usually? 
+            // Or does it? Let's check. 
+            // Actually, we can just send the coordinates to the backend and let it handle.
+            // But we need to know what 'synctex edit' expects.
+            // It expects: page:x:y:file, where y is from top.
+
+            const pdfY_fromTop = viewport.viewBox[3] - pdfY;
+
+            this.handleSyncTex(pageNum, pdfX, pdfY_fromTop);
+        });
+
+        // Annotation Layer
+        const annotationLayerDiv = document.createElement('div');
+        annotationLayerDiv.className = 'annotationLayer';
+        annotationLayerDiv.style.width = `${viewport.width}px`;
+        annotationLayerDiv.style.height = `${viewport.height}px`;
+        pageDiv.appendChild(annotationLayerDiv);
+
+        const annotations = await page.getAnnotations();
+        annotations.forEach(annotation => {
+            if (annotation.subtype === 'Link') {
+                const rect = viewport.convertToViewportRectangle(annotation.rect);
+                const left = Math.min(rect[0], rect[2]);
+                const top = Math.min(rect[1], rect[3]);
+                const width = Math.abs(rect[0] - rect[2]);
+                const height = Math.abs(rect[1] - rect[3]);
+
+                const linkDiv = document.createElement('div');
+                linkDiv.className = 'pdf-link-annotation';
+                linkDiv.style.left = `${left}px`;
+                linkDiv.style.top = `${top}px`;
+                linkDiv.style.width = `${width}px`;
+                linkDiv.style.height = `${height}px`;
+
+                if (annotation.url) {
+                    linkDiv.onclick = () => window.open(annotation.url, '_blank');
+                } else if (annotation.dest) {
+                    linkDiv.onclick = (e) => this.handleLinkClick(e, annotation.dest);
+                }
+
+                annotationLayerDiv.appendChild(linkDiv);
+            }
+        });
+    },
+
+    async handleSyncTex(page, x, y) {
+        // Need to find which PDF we are viewing. 
+        // lastCompiledPdfUrl is something like http://.../api/project/file/lam_main_latest.pdf
+        if (!this.state.lastCompiledPdfUrl) return;
+
+        const pdfName = this.state.lastCompiledPdfUrl.split('/').pop();
+
+        try {
+            const res = await fetch(`${API_BASE}/api/synctex`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    filename: pdfName,
+                    page: page,
+                    x: x,
+                    y: y
+                })
+            });
+            const result = await res.json();
+
+            if (result.success) {
+                // Focus the file and line
+                const file = this.state.files.find(f => f.name === result.file);
+                if (file) {
+                    await this.selectFile(file);
+                    this.gotoLine(result.line);
+                    showToast(`Going to ${result.file}:${result.line}`);
+                }
+            } else {
+                console.warn("SyncTex failed", result);
+            }
+        } catch (e) {
+            console.error("SyncTex error", e);
+        }
+    },
+
+    gotoLine(lineNum) {
+        const editor = this.elements.codeEditor;
+        if (!editor) return;
+
+        const lines = editor.value.split('\n');
+        let pos = 0;
+        for (let i = 0; i < lineNum - 1 && i < lines.length; i++) {
+            pos += lines[i].length + 1; // +1 for newline
+        }
+
+        editor.focus();
+        // Highlight the line
+        const lineEnd = pos + (lines[lineNum - 1]?.length || 0);
+        editor.setSelectionRange(pos, lineEnd);
+
+        // Scroll to line
+        const lineHeight = 20; // approximate
+        editor.scrollTop = (lineNum - 10) * lineHeight;
+
+        this.updateLineNumbers();
+        this.updateCurrentLine();
+    },
+
+    handleLinkClick(e, dest) {
+        e.stopPropagation();
+        // Dest is usually a named destination string like "cite.yih2016webqsp"
+        let key = null;
+
+        if (typeof dest === 'string') {
+            key = dest;
+        } else if (Array.isArray(dest) && dest.length > 0) {
+            // pdf.js sometimes returns [{num, gen, name}] or similar structures
+            const maybeName = dest[0]?.name || dest[0];
+            if (typeof maybeName === 'string') {
+                key = maybeName;
+            }
+        }
+
+        if (!key) {
+            console.log('Unsupported citation destination format:', dest);
+            return;
+        }
+
+        if (key.startsWith('cite.')) key = key.substring(5);
+
+        if (this.state.citationMap[key]) {
+            const paperId = this.state.citationMap[key];
+            openPaper(paperId); // Global function
+        } else {
+            console.log('Citation not found in map:', key);
+            showToast('Citation not linked to a PDF');
+        }
+    },
+
+    // ==========================================
+    // FIND IN TEX FUNCTIONALITY
+    // ==========================================
+
+    toggleFindBar() {
+        const findBar = this.elements.findBar;
+        if (!findBar) return;
+
+        if (findBar.style.display === 'none') {
+            findBar.style.display = 'block';
+            this.elements.findInput?.focus();
+        } else {
+            this.closeFindBar();
+        }
+    },
+
+    closeFindBar() {
+        if (this.elements.findBar) {
+            this.elements.findBar.style.display = 'none';
+        }
+        this.clearFindHighlights();
+    },
+
+    performFind() {
+        const query = this.elements.findInput?.value?.toLowerCase() || '';
+        const editor = this.elements.codeEditor;
+        if (!editor || !query) {
+            this.elements.findCount.textContent = '0 results';
+            this.state.findMatches = [];
+            return;
+        }
+
+        const content = editor.value.toLowerCase();
+        const matches = [];
+        let pos = 0;
+
+        while ((pos = content.indexOf(query, pos)) !== -1) {
+            matches.push(pos);
+            pos += query.length;
+        }
+
+        this.state.findMatches = matches;
+        this.state.currentFindIndex = matches.length > 0 ? 0 : -1;
+        this.elements.findCount.textContent = `${matches.length} result${matches.length !== 1 ? 's' : ''}`;
+
+        if (matches.length > 0) {
+            this.highlightCurrentMatch();
+        }
+    },
+
+    findNext() {
+        if (this.state.findMatches.length === 0) return;
+        this.state.currentFindIndex = (this.state.currentFindIndex + 1) % this.state.findMatches.length;
+        this.highlightCurrentMatch();
+    },
+
+    findPrev() {
+        if (this.state.findMatches.length === 0) return;
+        this.state.currentFindIndex = this.state.currentFindIndex <= 0
+            ? this.state.findMatches.length - 1
+            : this.state.currentFindIndex - 1;
+        this.highlightCurrentMatch();
+    },
+
+    highlightCurrentMatch() {
+        const editor = this.elements.codeEditor;
+        const query = this.elements.findInput?.value || '';
+        if (!editor || this.state.currentFindIndex < 0) return;
+
+        const pos = this.state.findMatches[this.state.currentFindIndex];
+        editor.focus();
+        editor.setSelectionRange(pos, pos + query.length);
+
+        // Scroll to selection
+        const lineHeight = 20;
+        const linesBeforeMatch = editor.value.substring(0, pos).split('\n').length;
+        editor.scrollTop = (linesBeforeMatch - 5) * lineHeight;
+
+        this.elements.findCount.textContent = `${this.state.currentFindIndex + 1}/${this.state.findMatches.length}`;
+    },
+
+    clearFindHighlights() {
+        this.state.findMatches = [];
+        this.state.currentFindIndex = -1;
+    },
+
+    // ==========================================
+    // FIND IN PDF FUNCTIONALITY
+    // ==========================================
+
+    togglePdfFindBar() {
+        const findBar = this.elements.pdfFindBar;
+        if (!findBar) return;
+
+        if (findBar.style.display === 'none') {
+            findBar.style.display = 'block';
+            this.elements.pdfFindInput?.focus();
+        } else {
+            this.closePdfFindBar();
+        }
+    },
+
+    closePdfFindBar() {
+        if (this.elements.pdfFindBar) {
+            this.elements.pdfFindBar.style.display = 'none';
+        }
+    },
+
+    async performPdfFind() {
+        const query = this.elements.pdfFindInput?.value || '';
+        if (!this.state.pdfDoc || !query) {
+            this.elements.pdfFindCount.textContent = '0 results';
+            return;
+        }
+
+        // PDF.js text search is complex - simplified version
+        let totalMatches = 0;
+        for (let i = 1; i <= this.state.pdfDoc.numPages; i++) {
+            const page = await this.state.pdfDoc.getPage(i);
+            const textContent = await page.getTextContent();
+            const text = textContent.items.map(item => item.str).join(' ').toLowerCase();
+            const matches = (text.match(new RegExp(query.toLowerCase(), 'g')) || []).length;
+            totalMatches += matches;
+        }
+
+        this.elements.pdfFindCount.textContent = `${totalMatches} result${totalMatches !== 1 ? 's' : ''}`;
+        if (totalMatches > 0) {
+            showToast(`Found ${totalMatches} matches in PDF`);
+        }
+    },
+
+    pdfFindNext() {
+        showToast('Navigate to next match');
+    },
+
+    pdfFindPrev() {
+        showToast('Navigate to previous match');
+    },
+
+    // ==========================================
+    // EDIT HISTORY FUNCTIONALITY
+    // ==========================================
+
+    loadHistory() {
+        try {
+            const saved = localStorage.getItem('paperreader_history');
+            this.state.editHistory = saved ? JSON.parse(saved) : [];
+        } catch (e) {
+            this.state.editHistory = [];
+        }
+    },
+
+    saveToHistory(action, filename, content = null) {
+        const entry = {
+            id: Date.now(),
+            timestamp: new Date().toISOString(),
+            action,
+            filename,
+            content: content ? content.substring(0, 500) : null // Store preview only
+        };
+
+        this.state.editHistory.unshift(entry);
+
+        // Keep only last 50 entries
+        if (this.state.editHistory.length > 50) {
+            this.state.editHistory = this.state.editHistory.slice(0, 50);
+        }
+
+        try {
+            localStorage.setItem('paperreader_history', JSON.stringify(this.state.editHistory));
+        } catch (e) {
+            console.warn('Failed to save history to localStorage');
+        }
+    },
+
+    showHistory() {
+        if (!this.elements.historyModal) return;
+
+        this.elements.historyModal.style.display = 'flex';
+        this.renderHistory();
+    },
+
+    closeHistory() {
+        if (this.elements.historyModal) {
+            this.elements.historyModal.style.display = 'none';
+        }
+    },
+
+    renderHistory() {
+        const container = this.elements.historyList;
+        if (!container) return;
+
+        if (this.state.editHistory.length === 0) {
+            container.innerHTML = `
+                <div class="history-empty">
+                    <i class="bi bi-clock-history"></i>
+                    <p>No edit history yet</p>
+                    <p style="font-size: 0.8rem; opacity: 0.7;">Your edits will appear here</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = this.state.editHistory.map(entry => {
+            const date = new Date(entry.timestamp);
+            const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+            return `
+                <div class="history-item" data-id="${entry.id}">
+                    <div class="history-time">${timeStr}<br><small>${dateStr}</small></div>
+                    <div class="history-details">
+                        <div class="history-action">${this.escapeHtml(entry.action)}</div>
+                        <div class="history-file">${this.escapeHtml(entry.filename)}</div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    },
+
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    },
+
+    // ==========================================
+    // ZOOM FUNCTIONALITY
+    // ==========================================
+
+    zoomIn() {
+        this.state.pdfScale = Math.min(this.state.pdfScale + 0.2, 3.0);
+        if (this.state.lastCompiledPdfUrl) {
+            this.reRenderPdf();
+        }
+        showToast(`Zoom: ${Math.round(this.state.pdfScale * 100)}%`);
+    },
+
+    zoomOut() {
+        this.state.pdfScale = Math.max(this.state.pdfScale - 0.2, 0.5);
+        if (this.state.lastCompiledPdfUrl) {
+            this.reRenderPdf();
+        }
+        showToast(`Zoom: ${Math.round(this.state.pdfScale * 100)}%`);
+    },
+
+    async reRenderPdf() {
+        if (!this.state.pdfDoc) return;
+
+        this.elements.pdfContainer.innerHTML = '';
+        for (let pageNum = 1; pageNum <= this.state.pdfDoc.numPages; pageNum++) {
+            await this.renderPage(pageNum);
+        }
+    },
+
+    // ==========================================
+    // LINE NUMBERS FUNCTIONALITY
+    // ==========================================
+
+    toggleLineNumbers() {
+        const lineNumbers = this.elements.lineNumbers;
+        const btn = this.elements.btnLineNumbers;
+        if (!lineNumbers) return;
+
+        lineNumbers.classList.toggle('hidden');
+        btn?.classList.toggle('active');
+
+        // Save preference
+        const isVisible = !lineNumbers.classList.contains('hidden');
+        localStorage.setItem('paperreader_linenumbers', isVisible ? 'true' : 'false');
+
+        showToast(isVisible ? 'Line numbers shown' : 'Line numbers hidden');
+    },
+
+    loadLineNumbersPreference() {
+        const pref = localStorage.getItem('paperreader_linenumbers');
+        if (pref === 'false') {
+            this.elements.lineNumbers?.classList.add('hidden');
+            this.elements.btnLineNumbers?.classList.remove('active');
+        }
+    },
+
+    updateLineNumbers() {
+        const editor = this.elements.codeEditor;
+        const lineNumbers = this.elements.lineNumbers;
+        if (!editor || !lineNumbers) return;
+
+        const lines = editor.value.split('\n');
+        const lineCount = lines.length;
+
+        let html = '';
+        for (let i = 1; i <= lineCount; i++) {
+            html += `<span data-line="${i}">${i}</span>`;
+        }
+        lineNumbers.innerHTML = html;
+    },
+
+    syncLineNumberScroll() {
+        const editor = this.elements.codeEditor;
+        const lineNumbers = this.elements.lineNumbers;
+        if (!editor || !lineNumbers) return;
+
+        lineNumbers.scrollTop = editor.scrollTop;
+    },
+
+    updateCurrentLine() {
+        const editor = this.elements.codeEditor;
+        const lineNumbers = this.elements.lineNumbers;
+        if (!editor || !lineNumbers) return;
+
+        const cursorPos = editor.selectionStart;
+        const textBefore = editor.value.substring(0, cursorPos);
+        const currentLine = textBefore.split('\n').length;
+
+        // Remove previous active
+        lineNumbers.querySelectorAll('.active').forEach(el => el.classList.remove('active'));
+
+        // Add active to current line
+        const lineEl = lineNumbers.querySelector(`[data-line="${currentLine}"]`);
+        if (lineEl) lineEl.classList.add('active');
+    },
+
+    // ==========================================
+    // PANEL RESIZER FUNCTIONALITY
+    // ==========================================
+
+    setupPanelResizer() {
+        const resizer = this.elements.panelResizer;
+        const sourceView = this.elements.sourceView;
+        const previewView = this.elements.previewView;
+
+        if (!resizer || !sourceView || !previewView) return;
+
+        let isResizing = false;
+        let startX = 0;
+        let startSourceWidth = 0;
+        let startPreviewWidth = 0;
+
+        const startResize = (e) => {
+            isResizing = true;
+            startX = e.clientX || e.touches?.[0]?.clientX || 0;
+            startSourceWidth = sourceView.offsetWidth;
+            startPreviewWidth = previewView.offsetWidth;
+
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+
+            // Disable transitions during drag for smooth resizing
+            sourceView.style.transition = 'none';
+            previewView.style.transition = 'none';
+        };
+
+        const doResize = (e) => {
+            if (!isResizing) return;
+
+            const currentX = e.clientX || e.touches?.[0]?.clientX || 0;
+            const delta = currentX - startX;
+
+            const containerWidth = sourceView.parentElement.offsetWidth - resizer.offsetWidth;
+            const minWidth = 200;
+
+            let newSourceWidth = startSourceWidth + delta;
+            let newPreviewWidth = startPreviewWidth - delta;
+
+            // Enforce minimum widths
+            if (newSourceWidth < minWidth) {
+                newSourceWidth = minWidth;
+                newPreviewWidth = containerWidth - minWidth;
+            }
+            if (newPreviewWidth < minWidth) {
+                newPreviewWidth = minWidth;
+                newSourceWidth = containerWidth - minWidth;
+            }
+
+            // Apply as flex-basis for smooth sizing
+            sourceView.style.flex = `0 0 ${newSourceWidth}px`;
+            previewView.style.flex = `0 0 ${newPreviewWidth}px`;
+        };
+
+        const stopResize = () => {
+            if (!isResizing) return;
+            isResizing = false;
+
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+
+            // Re-enable transitions
+            sourceView.style.transition = '';
+            previewView.style.transition = '';
+
+            // Save panel sizes
+            const sourcePercent = (sourceView.offsetWidth / sourceView.parentElement.offsetWidth) * 100;
+            localStorage.setItem('paperreader_panel_ratio', sourcePercent.toString());
+        };
+
+        // Mouse events
+        resizer.addEventListener('mousedown', startResize);
+        document.addEventListener('mousemove', doResize);
+        document.addEventListener('mouseup', stopResize);
+
+        // Touch events for mobile
+        resizer.addEventListener('touchstart', startResize, { passive: true });
+        document.addEventListener('touchmove', doResize, { passive: true });
+        document.addEventListener('touchend', stopResize);
+
+        // Load saved panel ratio
+        this.loadPanelRatio();
+    },
+
+    loadPanelRatio() {
+        const saved = localStorage.getItem('paperreader_panel_ratio');
+        if (saved) {
+            const sourcePercent = parseFloat(saved);
+            if (sourcePercent > 10 && sourcePercent < 90) {
+                const sourceView = this.elements.sourceView;
+                const previewView = this.elements.previewView;
+                if (sourceView && previewView) {
+                    sourceView.style.flex = `0 0 ${sourcePercent}%`;
+                    previewView.style.flex = `0 0 ${100 - sourcePercent - 1}%`; // Account for resizer
+                }
+            }
+        }
+    },
+
+    async syncSourceToPdf() {
+        if (!this.state.currentFile || !this.state.currentFile.endsWith('.tex')) {
+            showToast("Open a .tex file to sync");
+            return;
+        }
+
+        const line = this.getCurrentLine();
+        const pdfName = this.state.lastCompiledPdfUrl?.split('/').pop();
+
+        if (!pdfName) {
+            showToast("Compile first to sync");
+            return;
+        }
+
+        try {
+            const res = await fetch(`${API_BASE}/api/synctex/forward`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    tex_file: this.state.currentFile,
+                    line: line,
+                    pdf_file: pdfName
+                })
+            });
+            const result = await res.json();
+
+            if (result.success) {
+                this.scrollToPdfLocation(result.page, result.x, result.y);
+                showToast(`Syncing to page ${result.page}`);
+            } else {
+                console.warn("Forward Sync failed", result);
+                showToast("No PDF location found for this line");
+            }
+        } catch (e) {
+            console.error("Forward Sync error", e);
+        }
+    },
+
+    getCurrentLine() {
+        const editor = this.elements.codeEditor;
+        const textBeforeCursor = editor.value.substring(0, editor.selectionStart);
+        return textBeforeCursor.split('\n').length;
+    },
+
+    scrollToPdfLocation(page, x, y) {
+        const pageEl = document.querySelector(`.pdf-page[data-page-number="${page}"]`);
+        if (!pageEl) return;
+
+        // Scroll the container to this page
+        pageEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Add a temporary highlight at the location
+        const marker = document.createElement('div');
+        marker.style.position = 'absolute';
+        marker.style.left = `${x * this.state.pdfScale}px`; // Scale coordinates by current zoom
+        marker.style.top = `${y * this.state.pdfScale}px`;
+        marker.style.width = '100px';
+        marker.style.height = '20px';
+        marker.style.background = 'rgba(0, 255, 255, 0.4)';
+        marker.style.boxShadow = '0 0 10px rgba(0, 255, 255, 0.6)';
+        marker.style.borderRadius = '4px';
+        marker.style.pointerEvents = 'none';
+        marker.style.zIndex = '100';
+        marker.style.transform = 'translate(-20px, -50%)';
+
+        pageEl.appendChild(marker);
+        setTimeout(() => marker.remove(), 2500);
+    }
+};
+
+/**
+ * Copilot Controller - AI Assistant with MLLM Integration
+ */
+const CopilotController = {
+    isOpen: false,
+    isListening: false,
+    recognition: null,
+    selectedContext: null,
+    conversationHistory: [],
+    pendingImage: null,
+    lastDragDistance: 0,
+
+    elements: {
+        fab: null,
+        panel: null,
+        messagesContainer: null,
+        input: null,
+        sendBtn: null,
+        voiceBtn: null,
+        imageBtn: null,
+        imageInput: null,
+        closeBtn: null,
+        clearBtn: null,
+        contextBlock: null,
+        contextCode: null,
+        contextLabel: null,
+        attachments: null
+    },
+
+    init() {
+        // Get DOM elements
+        this.elements.fab = document.getElementById('copilot-fab');
+        this.elements.panel = document.getElementById('copilot-panel');
+        this.elements.messagesContainer = document.getElementById('copilot-messages');
+        this.elements.input = document.getElementById('copilot-input');
+        this.elements.sendBtn = document.getElementById('copilot-send');
+        this.elements.voiceBtn = document.getElementById('copilot-voice');
+        this.elements.imageBtn = document.getElementById('copilot-attach-image');
+        this.elements.imageInput = document.getElementById('copilot-image-input');
+        this.elements.closeBtn = document.getElementById('copilot-minimize');
+        this.elements.clearBtn = document.getElementById('copilot-clear');
+        this.elements.contextBlock = document.getElementById('copilot-context');
+        this.elements.contextCode = document.getElementById('context-code');
+        this.elements.contextLabel = document.querySelector('#copilot-context .context-label span');
+        this.elements.attachments = document.getElementById('copilot-attachments');
+        this.elements.resizer = document.getElementById('copilot-resizer');
+
+        if (!this.elements.fab) return;
+
+        // Setup resizer
+        this.setupPanelResizer();
+
+        // Setup event listeners
+        this.setupEventListeners();
+        this.makeDraggable();
+        this.setupSpeechRecognition();
+        this.setupTextSelection();
+
+        window.addEventListener('resize', () => {
+            if (this.isOpen) {
+                this.positionPanel();
+            }
+        });
+
+        // Add welcome message
+        this.addMessage('assistant', 'Hello! I\'m your LaTeX Copilot. Select text from the editor for context, then ask me anything about your paper. I can help with writing, formatting, citations, and more!');
+    },
+
+    setupEventListeners() {
+        // FAB click to toggle panel - handled in makeDraggable to avoid drag conflicts
+
+        // Close button
+        this.elements.closeBtn?.addEventListener('click', () => this.close());
+
+        // Clear button
+        this.elements.clearBtn?.addEventListener('click', () => this.clearChat());
+
+        // Send button
+        this.elements.sendBtn?.addEventListener('click', () => this.sendMessage());
+
+        // Input enter key
+        this.elements.input?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this.sendMessage();
+            }
+        });
+
+        // Voice button
+        this.elements.voiceBtn?.addEventListener('click', () => this.toggleVoice());
+
+        // Image button and input
+        this.elements.imageBtn?.addEventListener('click', () => {
+            this.elements.imageInput?.click();
+        });
+
+        this.elements.imageInput?.addEventListener('change', (e) => {
+            this.handleImageUpload(e);
+        });
+
+        // Paste image support
+        this.elements.input?.addEventListener('paste', (e) => this.handlePaste(e));
+
+        // Clear selected context
+        document.getElementById('context-clear')?.addEventListener('click', () => this.clearContext());
+    },
+
+    makeDraggable() {
+        const fab = this.elements.fab;
+        if (!fab) return;
+
+        let isMouseDown = false;
+        let isDragging = false;
+        let startX, startY, startLeft, startBottom;
+        let totalDelta = 0;
+
+        const promoteToDragThreshold = 8; // px, lower so small drags don't toggle panel
+
+        const onStart = (e) => {
+            isMouseDown = true;
+            isDragging = false;
+
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
+            startX = clientX;
+            startY = clientY;
+
+            const rect = fab.getBoundingClientRect();
+            startLeft = rect.left;
+            startBottom = window.innerHeight - rect.bottom;
+
+            fab.style.transition = 'none';
+            fab.style.cursor = 'pointer';
+        };
+
+        const onMove = (e) => {
+            if (!isMouseDown) return;
+
+            const clientX = e.type.includes('touch') ? e.touches[0].clientX : e.clientX;
+            const clientY = e.type.includes('touch') ? e.touches[0].clientY : e.clientY;
+
+            const deltaX = clientX - startX;
+            const deltaY = clientY - startY;
+
+            totalDelta = Math.max(Math.abs(deltaX), Math.abs(deltaY));
+
+            // Only start dragging after threshold to avoid accidental drags on click
+            if (!isDragging && (Math.abs(deltaX) > promoteToDragThreshold || Math.abs(deltaY) > promoteToDragThreshold)) {
+                isDragging = true;
+                fab.style.cursor = 'grabbing';
+            }
+
+            if (!isDragging) return;
+
+            const newLeft = startLeft + deltaX;
+            const newBottom = startBottom - deltaY;
+
+            // Constrain to viewport
+            const fabSize = 60;
+            const maxLeft = window.innerWidth - fabSize - 10;
+            const maxBottom = window.innerHeight - fabSize - 10;
+
+            fab.style.left = `${Math.max(10, Math.min(newLeft, maxLeft))}px`;
+            fab.style.right = 'auto';
+            fab.style.bottom = `${Math.max(10, Math.min(newBottom, maxBottom))}px`;
+
+            if (this.isOpen) {
+                this.positionPanel();
+            }
+        };
+
+        const onEnd = () => {
+            if (!isMouseDown) return;
+
+            fab.style.transition = '';
+            fab.style.cursor = 'pointer';
+
+            // Only treat as click when movement was tiny
+            if (!isDragging && totalDelta < promoteToDragThreshold / 2) {
+                this.toggle();
+            }
+
+            isMouseDown = false;
+            isDragging = false;
+            totalDelta = 0;
+        };
+
+        fab.addEventListener('mousedown', onStart);
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onEnd);
+
+        fab.addEventListener('touchstart', onStart, { passive: true });
+        document.addEventListener('touchmove', onMove, { passive: true });
+        document.addEventListener('touchend', onEnd);
+    },
+
+    setupSpeechRecognition() {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        if (!SpeechRecognition) {
+            console.warn('Speech recognition not supported');
+            if (this.elements.voiceBtn) {
+                this.elements.voiceBtn.style.display = 'none';
+            }
+            return;
+        }
+
+        this.recognition = new SpeechRecognition();
+        this.recognition.continuous = false;
+        this.recognition.interimResults = true;
+        this.recognition.lang = 'en-US';
+
+        this.recognition.onstart = () => {
+            this.isListening = true;
+            this.elements.voiceBtn?.classList.add('listening');
+        };
+
+        this.recognition.onend = () => {
+            this.isListening = false;
+            this.elements.voiceBtn?.classList.remove('listening');
+        };
+
+        this.recognition.onresult = (event) => {
+            let finalTranscript = '';
+            let interimTranscript = '';
+
+            for (let i = event.resultIndex; i < event.results.length; i++) {
+                const transcript = event.results[i][0].transcript;
+                if (event.results[i].isFinal) {
+                    finalTranscript += transcript;
+                } else {
+                    interimTranscript += transcript;
+                }
+            }
+
+            if (finalTranscript) {
+                this.elements.input.value += finalTranscript + ' ';
+            }
+        };
+
+        this.recognition.onerror = (event) => {
+            console.error('Speech recognition error:', event.error);
+            this.isListening = false;
+            this.elements.voiceBtn?.classList.remove('listening');
+        };
+    },
+
+    setupTextSelection() {
+        // Listen for text selection in the editor
+        document.addEventListener('mouseup', () => {
+            setTimeout(() => this.captureSelection(), 10);
+        });
+
+        document.addEventListener('keyup', (e) => {
+            if (e.shiftKey) {
+                setTimeout(() => this.captureSelection(), 10);
+            }
+        });
+    },
+
+    captureSelection() {
+        const selection = window.getSelection();
+        const selectedText = selection?.toString().trim();
+        const codeEditor = document.getElementById('code-editor');
+
+        // Prefer textarea selection when available (gives us line numbers)
+        if (codeEditor && codeEditor.selectionStart !== undefined && codeEditor.selectionEnd !== undefined) {
+            const start = codeEditor.selectionStart;
+            const end = codeEditor.selectionEnd;
+            if (start !== end) {
+                const fullText = codeEditor.value || '';
+                const text = fullText.slice(start, end).trim();
+                if (text) {
+                    const startLine = fullText.slice(0, start).split('\n').length;
+                    const endLine = fullText.slice(0, end).split('\n').length;
+                    this.selectedContext = { text, startLine, endLine };
+                    this.showContextToast(text, startLine, endLine);
+                    return;
+                }
+            }
+        }
+
+        // Fallback to DOM selection (outside textarea)
+        if (selectedText && selectedText.length > 0) {
+            this.selectedContext = { text: selectedText, startLine: null, endLine: null };
+            this.showContextToast(selectedText, null, null);
+        }
+    },
+
+    showContextToast(text, startLine, endLine) {
+        const block = this.elements.contextBlock;
+        if (!block) return;
+
+        const previewText = text.length > 200 ? `${text.slice(0, 200)}...` : text;
+        const linesLabel = startLine && endLine ? `Context: Lines ${startLine}–${endLine}` : 'Selected Context';
+
+        if (this.elements.contextLabel) {
+            this.elements.contextLabel.textContent = linesLabel;
+        }
+        if (this.elements.contextCode) {
+            this.elements.contextCode.textContent = previewText;
+        }
+
+        block.style.display = 'block';
+        // Auto-expand if first time
+        if (!this.isOpen) this.open();
+    },
+
+    toggle() {
+        if (this.isOpen) {
+            this.close();
+        } else {
+            this.open();
+        }
+    },
+
+    open() {
+        this.isOpen = true;
+        this.elements.panel?.classList.add('open');
+        this.elements.fab?.classList.add('active');
+        this.positionPanel();
+        this.elements.input?.focus();
+    },
+
+    close() {
+        this.isOpen = false;
+        this.elements.panel?.classList.remove('open');
+        this.elements.fab?.classList.remove('active');
+    },
+
+    clearContext() {
+        this.selectedContext = null;
+        if (this.elements.contextBlock) {
+            this.elements.contextBlock.style.display = 'none';
+        }
+    },
+
+    positionPanel() {
+        const fab = this.elements.fab;
+        const panel = this.elements.panel;
+        if (!fab || !panel) return;
+
+        const rect = fab.getBoundingClientRect();
+        const panelWidth = panel.offsetWidth || 400;
+
+        // Position strictly below the FAB
+        let left = rect.left + (rect.width / 2) - (panelWidth / 2);
+        let top = rect.bottom + 15;
+
+        // Keep within horizontal viewport
+        if (left + panelWidth > window.innerWidth - 20) {
+            left = window.innerWidth - panelWidth - 20;
+        }
+        if (left < 20) left = 20;
+
+        // Vertically, if it goes off bottom, we move it up a bit but keep it starting below or at FAB bottom
+        if (top + panel.offsetHeight > window.innerHeight - 20) {
+            top = window.innerHeight - panel.offsetHeight - 20;
+            // Ensure it doesn't cover the FAB if possible
+            if (top < rect.bottom) top = rect.bottom + 5;
+        }
+
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.right = 'auto';
+        panel.style.bottom = 'auto';
+    },
+
+    toggleVoice() {
+        if (!this.recognition) return;
+
+        if (this.isListening) {
+            this.recognition.stop();
+        } else {
+            this.recognition.start();
+        }
+    },
+
+    handleImageUpload(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const base64 = e.target.result;
+            this.pendingImage = {
+                data: base64,
+                name: file.name,
+                type: file.type
+            };
+
+            // Show image preview in input area
+            this.showImagePreview(base64);
+        };
+        reader.readAsDataURL(file);
+
+        // Clear the input so same file can be selected again
+        event.target.value = '';
+    },
+
+    async handlePaste(event) {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+
+        for (const item of items) {
+            if (item.type && item.type.startsWith('image/')) {
+                const file = item.getAsFile();
+                if (file) {
+                    const base64 = await this.fileToBase64(file);
+                    this.pendingImage = {
+                        data: base64,
+                        name: file.name || 'pasted-image',
+                        type: file.type
+                    };
+                    this.showImagePreview(base64);
+                    event.preventDefault();
+                    break;
+                }
+            }
+        }
+    },
+
+    fileToBase64(file) {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+    },
+
+    showImagePreview(base64) {
+        const container = this.elements.attachments;
+        if (!container) return;
+
+        container.innerHTML = '';
+
+        const preview = document.createElement('div');
+        preview.className = 'copilot-attachment';
+        preview.innerHTML = `
+            <img src="${base64}" alt="Upload preview">
+            <button class="remove" title="Remove image">×</button>
+        `;
+
+        preview.querySelector('.remove')?.addEventListener('click', () => {
+            this.pendingImage = null;
+            preview.remove();
+        });
+
+        container.appendChild(preview);
+    },
+
+    addMessage(role, content, image = null) {
+        const container = this.elements.messagesContainer;
+        if (!container) return;
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `copilot-message ${role}`;
+
+        let messageContent = '';
+
+        if (image) {
+            messageContent += `<img src="${image}" alt="Attached image" class="message-image">`;
+        }
+
+        // Convert markdown-like formatting
+        const formattedContent = this.formatMessage(content);
+        messageContent += `<div class="message-content">${formattedContent}</div>`;
+
+        messageDiv.innerHTML = messageContent;
+        container.appendChild(messageDiv);
+
+        // Scroll to bottom
+        container.scrollTop = container.scrollHeight;
+    },
+
+    formatMessage(content) {
+        // Basic markdown formatting
+        return content
+            .replace(/```(\w+)?\n([\s\S]*?)```/g, '<pre><code>$2</code></pre>')
+            .replace(/`([^`]+)`/g, '<code>$1</code>')
+            .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+            .replace(/\n/g, '<br>');
+    },
+
+    async sendMessage() {
+        const input = this.elements.input;
+        const text = input?.value.trim();
+
+        if (!text && !this.pendingImage) return;
+
+        // Build message with context
+        let userDisplayMessage = text;
+        let fullApiMessage = text;
+
+        if (this.selectedContext) {
+            const contextInfo = this.selectedContext.startLine
+                ? `Lines ${this.selectedContext.startLine}-${this.selectedContext.endLine}`
+                : "Selected text";
+            // Truncate context if it's too large for the message
+            const truncatedText = this.selectedContext.text.length > 10000
+                ? this.selectedContext.text.slice(0, 10000) + "... [truncated]"
+                : this.selectedContext.text;
+            fullApiMessage = `[Context (${contextInfo}): "${truncatedText}"]\n\n${text}`;
+        }
+
+        // Add user message to chat
+        this.addMessage('user', text, this.pendingImage?.data);
+
+        // Clear input
+        input.value = '';
+        this.elements.attachments.innerHTML = '';
+        const imageToUpload = this.pendingImage;
+        this.pendingImage = null;
+
+        // Prepare message container for streaming
+        const messageDiv = document.createElement('div');
+        messageDiv.className = 'copilot-message assistant';
+        const contentDiv = document.createElement('div');
+        contentDiv.className = 'message-content';
+        messageDiv.appendChild(contentDiv);
+        this.elements.messagesContainer.appendChild(messageDiv);
+
+        let assistantResponse = '';
+
+        try {
+            const messages = this.buildMessages(fullApiMessage);
+
+            await this.callMLLMStream(messages, imageToUpload, (chunk) => {
+                assistantResponse += chunk;
+                contentDiv.innerHTML = this.formatMessage(assistantResponse);
+                this.elements.messagesContainer.scrollTop = this.elements.messagesContainer.scrollHeight;
+            });
+
+            // Update history
+            this.conversationHistory.push({ role: 'assistant', content: assistantResponse });
+
+            // Clear context after successful send
+            this.clearContext();
+
+        } catch (error) {
+            console.error('MLLM API error:', error);
+            contentDiv.innerHTML = `<span style="color:var(--error)">Error: ${error.message}</span>`;
+        }
+    },
+
+    buildMessages(userMessage) {
+        // System message is always included
+        const sysMsg = {
+            role: 'system',
+            content: 'You are a helpful LaTeX and academic writing assistant.'
+        };
+
+        // Estimate character count (as a proxy for tokens)
+        // Max context ~8000 tokens ≈ 32,000 chars. 
+        // We limit input to ~15,000 chars to be safe.
+        const CHAR_LIMIT = 15000;
+
+        let messages = [];
+        let totalChars = sysMsg.content.length + userMessage.length;
+
+        // Add history in reverse until we hit the char limit
+        const historyToInclude = [];
+        for (let i = this.conversationHistory.length - 1; i >= 0; i--) {
+            const msg = this.conversationHistory[i];
+            const msgLen = (msg.content || "").length;
+            if (totalChars + msgLen > CHAR_LIMIT) {
+                // Remove older ones from global history too to "dump" them
+                this.conversationHistory = this.conversationHistory.slice(i + 1);
+                break;
+            }
+            historyToInclude.unshift(msg);
+            totalChars += msgLen;
+        }
+
+        messages.push(sysMsg);
+        messages.push(...historyToInclude);
+        messages.push({ role: 'user', content: userMessage });
+
+        // Update global history
+        this.conversationHistory.push({ role: 'user', content: userMessage });
+
+        return messages;
+    },
+
+    async callMLLMStream(messages, image = null, onChunk) {
+        const apiUrl = 'https://game.agaii.org/llm/v1/chat/completions';
+
+        const requestBody = {
+            model: 'gpt-4o-mini',
+            messages: messages,
+            max_tokens: 2048,
+            temperature: 0.7,
+            stream: true
+        };
+
+        if (image) {
+            const lastMessage = requestBody.messages[requestBody.messages.length - 1];
+            lastMessage.content = [
+                { type: 'image_url', image_url: { url: image.data } },
+                { type: 'text', text: lastMessage.content || "" }
+            ];
+        }
+
+        const response = await fetch(apiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(requestBody)
+        });
+
+        if (!response.ok) throw new Error(`API request failed: ${response.status}`);
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                const cleanLine = line.trim();
+                if (!cleanLine || cleanLine === 'data: [DONE]') continue;
+                if (cleanLine.startsWith('data: ')) {
+                    try {
+                        const json = JSON.parse(cleanLine.slice(6));
+                        const content = json.choices?.[0]?.delta?.content;
+                        if (content) onChunk(content);
+                    } catch (e) {
+                        console.warn("Error parsing stream chunk", e);
+                    }
+                }
+            }
+        }
+    },
+
+    setupPanelResizer() {
+        const resizer = this.elements.resizer;
+        const panel = this.elements.panel;
+        if (!resizer || !panel) return;
+
+        let isResizing = false;
+        let startX, startY, startWidth, startHeight, startLeft, startTop;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startWidth = panel.offsetWidth;
+            startHeight = panel.offsetHeight;
+            const rect = panel.getBoundingClientRect();
+            startLeft = rect.left;
+            startTop = rect.top;
+
+            document.addEventListener('mousemove', handleMouseMove);
+            document.addEventListener('mouseup', () => {
+                isResizing = false;
+                document.removeEventListener('mousemove', handleMouseMove);
+            });
+            e.preventDefault();
+        });
+
+        const handleMouseMove = (e) => {
+            if (!isResizing) return;
+            const deltaX = startX - e.clientX;
+            const deltaY = startY - e.clientY;
+
+            const newWidth = startWidth + deltaX;
+            const newHeight = startHeight + deltaY;
+
+            if (newWidth > 300) {
+                panel.style.width = newWidth + 'px';
+                panel.style.left = (startLeft - deltaX) + 'px';
+            }
+            if (newHeight > 350) {
+                panel.style.height = newHeight + 'px';
+                panel.style.top = (startTop - deltaY) + 'px';
+            }
+        };
+    },
+
+    addLoadingMessage() {
+        const container = this.elements.messagesContainer;
+        if (!container) return null;
+
+        const id = 'loading-' + Date.now();
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'copilot-message assistant loading';
+        loadingDiv.id = id;
+        loadingDiv.innerHTML = `
+            <div class="loading-dots">
+                <span></span><span></span><span></span>
+            </div>
+        `;
+        container.appendChild(loadingDiv);
+        container.scrollTop = container.scrollHeight;
+
+        return id;
+    },
+
+    removeLoadingMessage(id) {
+        if (!id) return;
+        document.getElementById(id)?.remove();
+    },
+
+    clearChat() {
+        if (this.elements.messagesContainer) {
+            this.elements.messagesContainer.innerHTML = '';
+        }
+        this.conversationHistory = [];
+        this.addMessage('assistant', 'Chat cleared. How can I help you?');
+    }
+};
+
+function setupEditor() {
+    EditorController.init();
+    CopilotController.init();
+}

@@ -1,0 +1,173 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{ji2022kgsurvey,lan2021kbqasurvey}
+\citation{bollacker2008freebase,vrandecic2014wikidata}
+\citation{jiang2023unikgqa,yasunaga2021qagnn}
+\citation{yih2016webqsp,yu2018spider}
+\citation{sun2024tog,jiang2024kgagent,luo2024rog}
+\citation{rar2025}
+\citation{achiam2023gpt4}
+\citation{lewis2020rag,peng2024graphrag}
+\citation{fu2020kbqasurvey2}
+\citation{gao2021densesurvey}
+\citation{khattab2020colbert,santhanam2022colbertv2}
+\providecommand \oddpage@label [2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {I}Introduction}{1}{section.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Computational profile of agentic KGQA pipelines. Each stage may involve one or more LLM calls.}}{1}{table.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{tab:agentic_cost}{{I}{1}{Computational profile of agentic KGQA pipelines. Each stage may involve one or more LLM calls}{table.caption.1}{}}
+\citation{yih2016webqsp}
+\citation{talmor2018cwq}
+\citation{yih2016webqsp,yu2018spider,lei2024spider2}
+\citation{jiang2023unikgqa}
+\citation{yasunaga2021qagnn,zhang2022greaselm,mavromatis2024gnnrag}
+\citation{sun2024tog}
+\citation{jiang2024kgagent}
+\citation{luo2024rog}
+\citation{rar2025}
+\citation{gao2021densesurvey}
+\citation{karpukhin2020dpr,izacard2022contriever}
+\citation{khattab2020colbert,santhanam2022colbertv2}
+\citation{gao2021simcse}
+\citation{yasunaga2021qagnn}
+\citation{gu2021beyond,cao2022kqa}
+\citation{bollacker2008freebase}
+\citation{sun2024tog,luo2024rog}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Comparison of agentic KGQA pipelines (left) versus our one-shot \textsc  {PathRanker}{} approach (right). Agentic methods require multiple LLM calls for iterative reasoning, while \textsc  {PathRanker}{} performs path ranking in a single forward pass, invoking the LLM only once for final answer generation.}}{2}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:comparison}{{1}{2}{Comparison of agentic KGQA pipelines (left) versus our one-shot \model {} approach (right). Agentic methods require multiple LLM calls for iterative reasoning, while \model {} performs path ranking in a single forward pass, invoking the LLM only once for final answer generation}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {II}Related Work}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-A}}Knowledge Graph Question Answering}{2}{subsection.2.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces Evolution of KGQA paradigms. We position our work as combining the efficiency of embedding methods with competitive accuracy.}}{2}{table.caption.3}\protected@file@percent }
+\newlabel{tab:paradigms}{{II}{2}{Evolution of KGQA paradigms. We position our work as combining the efficiency of embedding methods with competitive accuracy}{table.caption.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-B}}Efficient Retrieval and Late Interaction}{2}{subsection.2.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {II-C}}Question Classification for KGQA}{2}{subsection.2.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {III}Problem Formulation}{2}{section.3}\protected@file@percent }
+\citation{reimers2019sbert,xiao2024bge}
+\citation{fu2020kbqasurvey2}
+\citation{karpukhin2020dpr}
+\citation{khattab2020colbert}
+\citation{xiao2024bge}
+\citation{geirhos2020shortcut}
+\citation{touvron2023llama}
+\@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Question-type classification enables targeted candidate generation. One-hop questions see 82\% candidate reduction.}}{3}{table.caption.5}\protected@file@percent }
+\newlabel{tab:classifier}{{III}{3}{Question-type classification enables targeted candidate generation. One-hop questions see 82\% candidate reduction}{table.caption.5}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Candidate path statistics after type-guided filtering.}}{3}{table.caption.6}\protected@file@percent }
+\newlabel{tab:candidates}{{IV}{3}{Candidate path statistics after type-guided filtering}{table.caption.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {IV}Method}{3}{section.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-A}}Question-Type Classification}{3}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-B}}Candidate Path Generation}{3}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-C}}Late Interaction Path Ranking}{3}{subsection.4.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-C}0a}Encoding.}{3}{paragraph.4.3.0.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-C}0b}Hop Position Embeddings.}{3}{paragraph.4.3.0.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-C}0c}MaxSim Scoring.}{3}{paragraph.4.3.0.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Hop Auxiliary Supervision}{3}{subsection.4.4}\protected@file@percent }
+\citation{bollacker2008freebase}
+\citation{yih2016webqsp}
+\citation{talmor2018cwq}
+\citation{jiang2023unikgqa}
+\citation{mavromatis2024gnnrag}
+\citation{yasunaga2021qagnn}
+\citation{sun2024tog}
+\citation{jiang2024kgagent}
+\citation{luo2024rog}
+\citation{rar2025}
+\citation{damr2025}
+\citation{xiao2024bge}
+\citation{loshchilov2019adamw}
+\citation{zhang2022srnsm}
+\citation{jiang2023unikgqa}
+\citation{mavromatis2024gnnrag}
+\citation{yasunaga2021qagnn}
+\citation{yu2023decaf}
+\citation{luo2024chatkbqa}
+\citation{li2023kbbinder}
+\citation{baek2023kaping}
+\citation{jiang2023structgpt}
+\citation{sun2024tog}
+\citation{jiang2024kgagent}
+\citation{luo2024rog}
+\citation{rar2025}
+\citation{damr2025}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces System architecture of \textsc  {PathRanker}{}. \textbf  {Stage 1}: Question-type classifier predicts reasoning complexity. \textbf  {Stage 2}: Constrained BFS generates candidate paths. \textbf  {Stage 3}: Late interaction ranker scores all candidates in a single forward pass. \textbf  {Stage 4}: Top-ranked paths are fed to LLM for final answer synthesis---the only LLM invocation.}}{4}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:architecture}{{2}{4}{System architecture of \model {}. \textbf {Stage 1}: Question-type classifier predicts reasoning complexity. \textbf {Stage 2}: Constrained BFS generates candidate paths. \textbf {Stage 3}: Late interaction ranker scores all candidates in a single forward pass. \textbf {Stage 4}: Top-ranked paths are fed to LLM for final answer synthesis---the only LLM invocation}{figure.caption.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Late interaction scoring via MaxSim. Each question token finds its best-matching path token.}}{4}{figure.caption.7}\protected@file@percent }
+\newlabel{fig:maxsim}{{3}{4}{Late interaction scoring via MaxSim. Each question token finds its best-matching path token}{figure.caption.7}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Hop auxiliary losses enforce correct relation choices at each hop, preventing shortcut learning.}}{4}{figure.caption.8}\protected@file@percent }
+\newlabel{fig:hop_aux}{{4}{4}{Hop auxiliary losses enforce correct relation choices at each hop, preventing shortcut learning}{figure.caption.8}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-E}}Answer Synthesis}{4}{subsection.4.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {V}Experiments}{4}{section.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Experimental Setup}{4}{subsection.5.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Dataset statistics.}}{4}{table.caption.9}\protected@file@percent }
+\newlabel{tab:datasets}{{V}{4}{Dataset statistics}{table.caption.9}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces Baseline methods organized by paradigm.}}{4}{table.caption.10}\protected@file@percent }
+\newlabel{tab:baselines}{{VI}{4}{Baseline methods organized by paradigm}{table.caption.10}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Baselines}{4}{subsection.5.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Implementation Details}{4}{subsection.5.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-D}}Main Results}{4}{subsection.5.4}\protected@file@percent }
+\citation{wei2022cot,yao2023tot}
+\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Comprehensive comparison of KGQA methods on WebQSP and CWQ benchmarks. Results marked with * are from original papers. \textbf  {Bold}: best in column. $\dagger $Latency estimates based on reported LLM call counts assuming 300--500ms per API call; actual latency varies with hardware, model size, and API provider.}}{5}{table.caption.11}\protected@file@percent }
+\newlabel{tab:main_results}{{VII}{5}{Comprehensive comparison of KGQA methods on WebQSP and CWQ benchmarks. Results marked with * are from original papers. \textbf {Bold}: best in column. $\dagger $Latency estimates based on reported LLM call counts assuming 300--500ms per API call; actual latency varies with hardware, model size, and API provider}{table.caption.11}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Ablation study on WebQSP test set.}}{5}{table.caption.12}\protected@file@percent }
+\newlabel{tab:ablation}{{VIII}{5}{Ablation study on WebQSP test set}{table.caption.12}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces Latency breakdown per stage (WebQSP average).}}{5}{table.caption.13}\protected@file@percent }
+\newlabel{tab:latency}{{IX}{5}{Latency breakdown per stage (WebQSP average)}{table.caption.13}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-E}}Ablation Studies}{5}{subsection.5.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-F}}Efficiency Analysis}{5}{subsection.5.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Performance breakdown by question type on WebQSP.}}{5}{table.caption.14}\protected@file@percent }
+\newlabel{tab:by_type}{{X}{5}{Performance breakdown by question type on WebQSP}{table.caption.14}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {XI}{\ignorespaces Error analysis: primary failure modes.}}{5}{table.caption.15}\protected@file@percent }
+\newlabel{tab:errors}{{XI}{5}{Error analysis: primary failure modes}{table.caption.15}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-G}}Analysis by Question Type}{5}{subsection.5.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-H}}Error Analysis}{5}{subsection.5.8}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Discussion}{5}{section.6}\protected@file@percent }
+\citation{talmor2018cwq}
+\bibstyle{IEEEtran}
+\bibdata{ref}
+\bibcite{ji2022kgsurvey}{1}
+\bibcite{lan2021kbqasurvey}{2}
+\bibcite{bollacker2008freebase}{3}
+\bibcite{vrandecic2014wikidata}{4}
+\bibcite{jiang2023unikgqa}{5}
+\bibcite{yasunaga2021qagnn}{6}
+\bibcite{yih2016webqsp}{7}
+\bibcite{yu2018spider}{8}
+\bibcite{sun2024tog}{9}
+\bibcite{jiang2024kgagent}{10}
+\bibcite{luo2024rog}{11}
+\bibcite{rar2025}{12}
+\bibcite{achiam2023gpt4}{13}
+\bibcite{lewis2020rag}{14}
+\bibcite{peng2024graphrag}{15}
+\bibcite{fu2020kbqasurvey2}{16}
+\bibcite{gao2021densesurvey}{17}
+\bibcite{khattab2020colbert}{18}
+\bibcite{santhanam2022colbertv2}{19}
+\bibcite{talmor2018cwq}{20}
+\bibcite{lei2024spider2}{21}
+\bibcite{zhang2022greaselm}{22}
+\bibcite{mavromatis2024gnnrag}{23}
+\bibcite{karpukhin2020dpr}{24}
+\bibcite{izacard2022contriever}{25}
+\bibcite{gao2021simcse}{26}
+\bibcite{gu2021beyond}{27}
+\bibcite{cao2022kqa}{28}
+\bibcite{reimers2019sbert}{29}
+\bibcite{xiao2024bge}{30}
+\bibcite{touvron2023llama}{31}
+\bibcite{damr2025}{32}
+\bibcite{loshchilov2019adamw}{33}
+\bibcite{zhang2022srnsm}{34}
+\bibcite{yu2023decaf}{35}
+\bibcite{luo2024chatkbqa}{36}
+\bibcite{li2023kbbinder}{37}
+\bibcite{baek2023kaping}{38}
+\bibcite{jiang2023structgpt}{39}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Accuracy-latency trade-off. \textsc  {PathRanker}{} achieves the best balance in the high-accuracy, low-latency region.}}{6}{figure.caption.16}\protected@file@percent }
+\newlabel{fig:tradeoff}{{5}{6}{Accuracy-latency trade-off. \model {} achieves the best balance in the high-accuracy, low-latency region}{figure.caption.16}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{6}{section.7}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{References}{6}{section*.17}\protected@file@percent }
+\bibcite{wei2022cot}{40}
+\bibcite{yao2023tot}{41}
+\gdef \@abspage@last{7}

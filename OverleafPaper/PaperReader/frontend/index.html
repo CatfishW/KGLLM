@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Retro 1980s Pixel Style Academic Paper Reader - Browse and read research papers with nostalgic vibes">
+    <title>PAPER READER // 1980</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=VT323&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.2/font/bootstrap-icons.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
+</head>
+
+<body>
+    <!-- Scanline overlay -->
+    <div class="scanlines"></div>
+
+    <!-- CRT flicker effect -->
+    <div class="crt-flicker"></div>
+
+    <!-- Header -->
+    <header class="header">
+        <div class="header-content">
+            <div class="logo-section">
+                <div class="logo-icon">
+                    <i class="bi bi-journal-code"></i>
+                </div>
+                <div class="logo-text">
+                    <h1>PAPER READER</h1>
+                    <span class="tagline">// ACADEMIC ARCHIVE v1.0</span>
+                </div>
+            </div>
+            <div class="header-stats">
+                <div class="nav-tabs">
+                    <button class="nav-tab active" id="tab-library">LIBRARY</button>
+                    <button class="nav-tab" id="tab-editor">EDITOR</button>
+                </div>
+                <div class="presence-list" id="presence-list">
+                    <!-- Users will be populated here -->
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">PAPERS</span>
+                    <span class="stat-value" id="paper-count">0</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">USERS</span>
+                    <span class="stat-value online" id="user-count">0</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-content">
+            <div class="search-box">
+                <i class="bi bi-search"></i>
+                <input type="text" id="search-input" placeholder="SEARCH PAPERS...">
+                <button class="btn-clear" id="clear-search" title="Clear search">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="toolbar-controls">
+                <div class="sort-control">
+                    <label>SORT:</label>
+                    <select id="sort-by">
+                        <option value="year">YEAR</option>
+                        <option value="title">TITLE</option>
+                        <option value="size">SIZE</option>
+                    </select>
+                    <button class="btn-sort-order" id="sort-order" title="Toggle sort order">
+                        <i class="bi bi-sort-down"></i>
+                    </button>
+                </div>
+                <div class="view-control">
+                    <button class="btn-view active" id="view-grid" title="Grid view">
+                        <i class="bi bi-grid-3x3-gap-fill"></i>
+                    </button>
+                    <button class="btn-view" id="view-list" title="List view">
+                        <i class="bi bi-list-task"></i>
+                    </button>
+                </div>
+                <button class="btn-refresh" id="refresh-btn" title="Refresh papers">
+                    <i class="bi bi-arrow-clockwise"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <!-- Library View -->
+        <div id="library-view">
+            <div class="papers-container" id="papers-grid">
+                <!-- Papers will be loaded here -->
+            </div>
+
+            <!-- Loading indicator -->
+            <div class="loading" id="loading">
+                <div class="loading-spinner"></div>
+                <span>LOADING DATA...</span>
+            </div>
+
+            <!-- Empty state -->
+            <div class="empty-state" id="empty-state" style="display: none;">
+                <i class="bi bi-inbox"></i>
+                <h3>NO PAPERS FOUND</h3>
+                <p>Try adjusting your search criteria</p>
+            </div>
+        </div>
+
+        <!-- Editor View -->
+        <div id="editor-view" style="display: none;">
+            <div class="editor-container">
+                <!-- Sidebar -->
+                <div class="editor-sidebar">
+                    <div class="editor-section-title">PROJECT FILES</div>
+                    <div class="file-list" id="file-list">
+                        <!-- Files populated here -->
+                    </div>
+                </div>
+
+                <!-- Main Editor Area -->
+                <div class="editor-main">
+                    <div class="editor-toolbar">
+                        <div class="toolbar-left">
+                            <button class="btn-tool" id="btn-toggle-sidebar" title="Toggle Sidebar">
+                                <i class="bi bi-layout-sidebar"></i>
+                            </button>
+                            <span id="current-file-name" class="current-file">Select a file...</span>
+                            <button class="btn-tool" id="btn-find-tex" title="Find in TeX (Ctrl+F)">
+                                <i class="bi bi-search"></i>
+                            </button>
+                            <button class="btn-tool active" id="btn-line-numbers" title="Toggle Line Numbers">
+                                <i class="bi bi-list-ol"></i>
+                            </button>
+                            <button class="btn-tool" id="btn-history" title="View Edit History">
+                                <i class="bi bi-clock-history"></i>
+                            </button>
+                            <div class="mobile-editor-tabs">
+                                <button class="btn-mobile-tab active" id="btn-show-source">SOURCE</button>
+                                <button class="btn-mobile-tab" id="btn-show-preview">PREVIEW</button>
+                            </div>
+                        </div>
+                        <div class="toolbar-right">
+                            <input type="file" id="file-upload-input" style="display: none;">
+                            <button class="btn-tool" id="btn-upload" title="Upload File">
+                                <i class="bi bi-upload"></i>
+                            </button>
+                            <button class="btn-tool" id="btn-save" disabled title="Save (Ctrl+S)">
+                                <i class="bi bi-floppy"></i>
+                            </button>
+                            <button class="btn-tool btn-danger" id="btn-delete" title="Delete File"
+                                style="display: none;">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- Find Bar (hidden by default) -->
+                    <div class="find-bar" id="find-bar" style="display: none;">
+                        <div class="find-bar-content">
+                            <i class="bi bi-search"></i>
+                            <input type="text" id="find-input" placeholder="Find in document...">
+                            <span class="find-count" id="find-count">0 results</span>
+                            <button class="btn-find-nav" id="find-prev" title="Previous (Shift+Enter)">
+                                <i class="bi bi-chevron-up"></i>
+                            </button>
+                            <button class="btn-find-nav" id="find-next" title="Next (Enter)">
+                                <i class="bi bi-chevron-down"></i>
+                            </button>
+                            <button class="btn-find-close" id="find-close">
+                                <i class="bi bi-x"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="editor-content-area">
+                        <!-- Split View: Source & PDF -->
+                        <div class="source-view" id="source-view">
+                            <div class="line-numbers" id="line-numbers"></div>
+                            <textarea id="code-editor" class="code-editor" placeholder="Select a file to edit..."
+                                disabled></textarea>
+                        </div>
+                        <!-- Resizable Divider -->
+                        <div class="panel-resizer" id="panel-resizer">
+                            <div class="resizer-handle"></div>
+                        </div>
+                        <div class="preview-view" id="preview-view">
+                            <div class="preview-toolbar">
+                                <button class="btn-recompile" id="btn-compile">
+                                    <i class="bi bi-play-fill"></i>
+                                    <span class="btn-text">RECOMPILE</span>
+                                </button>
+                                <div class="preview-actions">
+                                    <button class="btn-tool" id="btn-find-pdf" title="Find in PDF (Ctrl+Shift+F)">
+                                        <i class="bi bi-search"></i>
+                                    </button>
+                                    <button class="btn-tool" id="btn-zoom-out" title="Zoom Out">
+                                        <i class="bi bi-zoom-out"></i>
+                                    </button>
+                                    <button class="btn-tool" id="btn-zoom-in" title="Zoom In">
+                                        <i class="bi bi-zoom-in"></i>
+                                    </button>
+                                    <button class="btn-tool" id="btn-toggle-citation-highlights"
+                                        title="Toggle Citation Highlights">
+                                        <i class="bi bi-bookmark-star"></i>
+                                    </button>
+                                    <button class="btn-compile-download" id="btn-download-compiled"
+                                        title="Download compiled PDF (Ctrl+Shift+D)" disabled>
+                                        <i class="bi bi-download"></i>
+                                        <span class="btn-text">PDF</span>
+                                    </button>
+                                    <span id="page-count-display" class="page-count">Page 1 of 1</span>
+                                </div>
+                            </div>
+                            <!-- PDF Find Bar -->
+                            <div class="find-bar pdf-find-bar" id="pdf-find-bar" style="display: none;">
+                                <div class="find-bar-content">
+                                    <i class="bi bi-search"></i>
+                                    <input type="text" id="pdf-find-input" placeholder="Find in PDF...">
+                                    <span class="find-count" id="pdf-find-count">0 results</span>
+                                    <button class="btn-find-nav" id="pdf-find-prev">
+                                        <i class="bi bi-chevron-up"></i>
+                                    </button>
+                                    <button class="btn-find-nav" id="pdf-find-next">
+                                        <i class="bi bi-chevron-down"></i>
+                                    </button>
+                                    <button class="btn-find-close" id="pdf-find-close">
+                                        <i class="bi bi-x"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="compile-status" class="compile-status" style="display: none;">
+                                <span class="spinner-small"></span> Using pdflatex...
+                            </div>
+                            <div id="pdf-viewer-container">
+                                <!-- PDF.js viewer will render here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- History Modal -->
+    <div class="history-modal" id="history-modal" style="display: none;">
+        <div class="history-backdrop"></div>
+        <div class="history-content">
+            <div class="history-header">
+                <h3><i class="bi bi-clock-history"></i> Edit History</h3>
+                <button class="btn-find-close" id="history-close">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+            <div class="history-body" id="history-list">
+                <!-- History entries populated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- PDF Viewer Modal -->
+    <div class="modal" id="pdf-modal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <i class="bi bi-file-earmark-pdf"></i>
+                    <span id="modal-paper-title">Loading...</span>
+                </div>
+                <div class="modal-controls">
+                    <button class="btn-modal btn-nav" id="btn-prev" title="Previous paper (K or Left Arrow)">
+                        <i class="bi bi-chevron-left"></i>
+                    </button>
+                    <button class="btn-modal btn-nav" id="btn-next" title="Next paper (J or Right Arrow)">
+                        <i class="bi bi-chevron-right"></i>
+                    </button>
+                    <span class="nav-divider"></span>
+                    <button class="btn-modal" id="btn-download" title="Download PDF (D)">
+                        <i class="bi bi-download"></i>
+                    </button>
+                    <button class="btn-modal" id="btn-fullscreen" title="Fullscreen (F)">
+                        <i class="bi bi-arrows-fullscreen"></i>
+                    </button>
+                    <button class="btn-modal btn-close" id="btn-close-modal" title="Close (ESC)">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-body">
+                <div class="pdf-info-panel" id="pdf-info-panel">
+                    <div class="info-item">
+                        <span class="info-label">YEAR</span>
+                        <span class="info-value" id="info-year">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">PAGES</span>
+                        <span class="info-value" id="info-pages">-</span>
+                    </div>
+                    <div class="info-item">
+                        <span class="info-label">SIZE</span>
+                        <span class="info-value" id="info-size">-</span>
+                    </div>
+                </div>
+                <div class="pdf-viewer-container">
+                    <iframe id="pdf-viewer" src=""></iframe>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- AI Copilot -->
+    <div class="copilot-fab" id="copilot-fab" title="AI Copilot">
+        <i class="bi bi-robot"></i>
+    </div>
+
+    <div class="copilot-panel" id="copilot-panel">
+        <div class="copilot-panel-resizer" id="copilot-resizer"></div>
+        <div class="copilot-header">
+            <div class="copilot-title">
+                <i class="bi bi-robot"></i>
+                <span>AI Copilot</span>
+            </div>
+            <div class="copilot-controls">
+                <button class="copilot-btn" id="copilot-clear" title="Clear chat">
+                    <i class="bi bi-trash"></i>
+                </button>
+                <button class="copilot-btn" id="copilot-minimize" title="Minimize">
+                    <i class="bi bi-dash-lg"></i>
+                </button>
+            </div>
+        </div>
+        <div class="copilot-context" id="copilot-context" style="display: none;">
+            <div class="context-label">
+                <i class="bi bi-code-square"></i>
+                <span>Selected Context:</span>
+                <button class="context-clear" id="context-clear">
+                    <i class="bi bi-x"></i>
+                </button>
+            </div>
+            <pre class="context-code" id="context-code"></pre>
+        </div>
+        <div class="copilot-messages" id="copilot-messages">
+            <div class="copilot-welcome">
+                <i class="bi bi-stars"></i>
+                <p>Hi! I'm your AI assistant. Select text in the editor and ask me questions about your LaTeX document.
+                </p>
+                <p class="hint">Tip: Select code in the editor, then ask me to explain, fix, or improve it.</p>
+            </div>
+        </div>
+        <div class="copilot-input-area">
+            <div class="copilot-attachments" id="copilot-attachments"></div>
+            <div class="copilot-input-row">
+                <button class="copilot-action-btn" id="copilot-attach-image" title="Attach image">
+                    <i class="bi bi-image"></i>
+                </button>
+                <button class="copilot-action-btn" id="copilot-voice" title="Voice input">
+                    <i class="bi bi-mic"></i>
+                </button>
+                <input type="file" id="copilot-image-input" accept="image/*" style="display: none;">
+                <textarea id="copilot-input" placeholder="Ask about your document..." rows="1"></textarea>
+                <button class="copilot-send" id="copilot-send" title="Send (Enter)">
+                    <i class="bi bi-send-fill"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="footer-content">
+            <span class="copyright">
+                <i class="bi bi-terminal"></i>
+                PAPER READER v1.0 // 2024
+            </span>
+            <span class="footer-text">
+                PRESS [ESC] TO CLOSE VIEWER
+            </span>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+
+</html>

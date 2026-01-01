@@ -1,0 +1,60 @@
+This is BibTeX, Version 0.99d
+Capacity: max_strings=200000, hash_size=200000, hash_prime=170003
+The top-level auxiliary file: lam_main_latest.aux
+Reallocating 'name_of_file' (item size: 1) to 9 items.
+The style file: IEEEtran.bst
+Reallocating 'name_of_file' (item size: 1) to 4 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Reallocating 'wiz_functions' (item size: 4) to 6000 items.
+Reallocating 'singl_function' (item size: 4) to 100 items.
+Database file #1: ref.bib
+Warning--I didn't find a database entry for "geirhos2020shortcut"
+-- IEEEtran.bst version 1.14 (2015/08/26) by Michael Shell.
+-- http://www.michaelshell.org/tex/ieeetran/bibtex/
+-- See the "IEEEtran_bst_HOWTO.pdf" manual for usage information.
+
+Done.
+You've used 41 entries,
+            4087 wiz_defined-function locations,
+            999 strings with 13911 characters,
+and the built_in function-call counts, 26219 in all, are:
+= -- 1942
+> -- 732
+< -- 136
++ -- 390
+- -- 154
+* -- 1207
+:= -- 3916
+add.period$ -- 82
+call.type$ -- 41
+change.case$ -- 41
+chr.to.int$ -- 348
+cite$ -- 41
+duplicate$ -- 2016
+empty$ -- 2408
+format.name$ -- 187
+if$ -- 6128
+int.to.chr$ -- 0
+int.to.str$ -- 41
+missing$ -- 376
+newline$ -- 146
+num.names$ -- 41
+pop$ -- 1003
+preamble$ -- 1
+purify$ -- 0
+quote$ -- 2
+skip$ -- 2016
+stack$ -- 0
+substring$ -- 869
+swap$ -- 1383
+text.length$ -- 20
+text.prefix$ -- 0
+top$ -- 5
+type$ -- 41
+warning$ -- 0
+while$ -- 93
+width$ -- 43
+write$ -- 370
+(There was 1 warning)

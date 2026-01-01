@@ -136,3 +136,6 @@ Thumbs.db
 *.temp
 *.log
 
+# Installers
+*.exe
+*.msixbundle
