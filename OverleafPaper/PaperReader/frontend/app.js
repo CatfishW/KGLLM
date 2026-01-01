@@ -1316,7 +1316,7 @@ const ProjectManager = {
     },
 
     createTemplateFiles(projectName) {
-        const safeName = projectName.replace(/[^a-zA-Z0-9 ]+/g, '').trim() || 'Paper Reader';
+        const safeName = projectName.replace(/[^a-zA-Z0-9 ]+/g, '').trim() || 'Rowan 308 Lab Workspace';
         const mainTex = `% ${safeName}\n\\documentclass{article}\n\\usepackage[margin=1in]{geometry}\n\\usepackage{graphicx}\n\\title{${safeName}}\n\\author{Your Name}\n\\date{\\today}\n\\begin{document}\n\\maketitle\n\\begin{abstract}\nWrite your abstract here.\n\\end{abstract}\n\\section{Introduction}\nStart writing your paper...\n\\end{document}\n`;
         const bib = `@article{sample2024,\n  title={Sample Reference},\n  author={Doe, Jane},\n  journal={Journal of Retro Research},\n  year={2024}\n}\n`;
         return [
