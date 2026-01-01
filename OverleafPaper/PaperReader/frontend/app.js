@@ -1556,6 +1556,7 @@ const EditorController = {
         files: [],
         currentFile: null,
         citationMap: {},
+        citationKeys: [],
         pdfDoc: null,
         lastCompiledPdfUrl: null,
         pdfScale: 1.2,
@@ -1581,7 +1582,15 @@ const EditorController = {
         lastCompileSummary: { errors: 0, warnings: 0 },
         lastCompileAt: 0,
         currentPreviewPage: 1,
-        pdfScrollHandler: null
+        pdfScrollHandler: null,
+        autocomplete: {
+            visible: false,
+            mode: null,
+            items: [],
+            activeIndex: -1,
+            context: null
+        },
+        autocompleteMirror: null
     },
 
     elements: {
@@ -1597,6 +1606,9 @@ const EditorController = {
         fileUploadInput: document.getElementById('file-upload-input'),
         btnDelete: document.getElementById('btn-delete'),
         codeEditor: document.getElementById('code-editor'),
+        latexAutocomplete: document.getElementById('latex-autocomplete'),
+        latexAutocompleteHeader: document.getElementById('latex-autocomplete-header'),
+        latexAutocompleteList: document.getElementById('latex-autocomplete-list'),
         compileStatus: document.getElementById('compile-status'),
         pdfContainer: document.getElementById('pdf-viewer-container'),
         btnDownloadCompiled: document.getElementById('btn-download-compiled'),
@@ -1675,6 +1687,20 @@ const EditorController = {
         btnShowPreview: document.getElementById('btn-show-preview'),
         editorContentArea: document.querySelector('.editor-content-area')
     },
+
+    latexCommandSuggestions: [
+        { label: '\\cite{}', insertText: '\\cite{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citet{}', insertText: '\\citet{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citep{}', insertText: '\\citep{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citeauthor{}', insertText: '\\citeauthor{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citeyear{}', insertText: '\\citeyear{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citeyearpar{}', insertText: '\\citeyearpar{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citealt{}', insertText: '\\citealt{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citealp{}', insertText: '\\citealp{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citenum{}', insertText: '\\citenum{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\citeonline{}', insertText: '\\citeonline{}', cursorOffset: -1, meta: 'cite-cmd' },
+        { label: '\\nocite{}', insertText: '\\nocite{}', cursorOffset: -1, meta: 'cite-cmd' }
+    ],
 
     async init() {
         // Tab switching
@@ -1766,6 +1792,7 @@ const EditorController = {
 
         // Line numbers toggle
         this.elements.btnLineNumbers?.addEventListener('click', () => this.toggleLineNumbers());
+        this.setupLatexAutocomplete();
 
         // Panel resizer
         this.setupPanelResizer();
@@ -1788,17 +1815,25 @@ const EditorController = {
         }
 
         // Update line numbers on editor scroll/input
-        this.elements.codeEditor?.addEventListener('scroll', () => this.syncLineNumberScroll());
+        this.elements.codeEditor?.addEventListener('scroll', () => {
+            this.syncLineNumberScroll();
+            this.positionLatexAutocomplete();
+        });
         this.elements.codeEditor?.addEventListener('input', () => this.handleEditorInput());
         this.elements.codeEditor?.addEventListener('keyup', () => {
             this.updateCurrentLine();
             this.captureCommentSelection();
+            this.updateLatexAutocomplete();
         });
         this.elements.codeEditor?.addEventListener('click', () => {
             this.updateCurrentLine();
             this.captureCommentSelection();
+            this.updateLatexAutocomplete();
         });
-        this.elements.codeEditor?.addEventListener('mouseup', () => this.captureCommentSelection());
+        this.elements.codeEditor?.addEventListener('mouseup', () => {
+            this.captureCommentSelection();
+            this.updateLatexAutocomplete();
+        });
 
         // Editor shortcuts
         document.addEventListener('keydown', (e) => {
@@ -1843,6 +1878,7 @@ const EditorController = {
             this.elements.tabLibrary.classList.add('active');
             this.elements.tabEditor.classList.remove('active');
             loadPapers();
+            this.hideLatexAutocomplete();
             // Show library tools
             document.querySelector('.toolbar').style.display = 'block';
             this.hideCompileLog();
@@ -1885,6 +1921,7 @@ const EditorController = {
             this.elements.editorContentArea.classList.add('show-preview');
             this.elements.btnShowSource.classList.remove('active');
             this.elements.btnShowPreview.classList.add('active');
+            this.hideLatexAutocomplete();
 
             // If viewing preview, make sure PDF is rendered
             if (this.state.lastCompiledPdfUrl) {
@@ -2006,6 +2043,7 @@ const EditorController = {
         } else {
             this.elements.sidebarBackdrop?.classList.remove('visible');
         }
+        this.positionLatexAutocomplete();
     },
 
     isMobileEditorView() {
@@ -2187,6 +2225,9 @@ const EditorController = {
                 const content = ProjectManager.getLocalFileContent(file.name) || '';
                 this.elements.codeEditor.value = content;
                 this.state.fileContents[file.name] = content;
+                if (file.name.toLowerCase().endsWith('.bib')) {
+                    this.updateCitationKeysFromBibContent(content);
+                }
                 this.state.dirtyFiles[file.name] = false;
                 this.state.commentSelection = null;
                 this.updateCommentContext();
@@ -2204,6 +2245,9 @@ const EditorController = {
             const data = await res.json();
             this.elements.codeEditor.value = data.content;
             this.state.fileContents[file.name] = data.content;
+            if (file.name.toLowerCase().endsWith('.bib')) {
+                this.updateCitationKeysFromBibContent(data.content);
+            }
             this.state.dirtyFiles[file.name] = false;
             this.state.commentSelection = null;
             this.updateCommentContext();
@@ -2230,6 +2274,7 @@ const EditorController = {
         this.updateDirtyState();
         this.scheduleOutlineUpdate();
         this.scheduleAutoSave();
+        this.updateLatexAutocomplete();
     },
 
     updateDirtyState() {
@@ -2265,6 +2310,383 @@ const EditorController = {
         const words = content.trim() ? content.trim().split(/\s+/).length : 0;
         const chars = content.length;
         statsEl.textContent = `WORDS ${words} • LINES ${lines} • CHARS ${chars}`;
+    },
+
+    setupLatexAutocomplete() {
+        const editor = this.elements.codeEditor;
+        const box = this.elements.latexAutocomplete;
+        const list = this.elements.latexAutocompleteList;
+        if (!editor || !box || !list) return;
+
+        editor.addEventListener('keydown', (e) => this.handleAutocompleteKeydown(e));
+        box.addEventListener('mousedown', (e) => e.preventDefault());
+
+        list.addEventListener('click', (e) => {
+            const item = e.target.closest('.autocomplete-item');
+            if (!item) return;
+            const index = Number(item.dataset.index);
+            const selected = this.state.autocomplete.items[index];
+            if (!selected || selected.disabled) return;
+            this.applyAutocompleteItem(selected);
+        });
+
+        list.addEventListener('mousemove', (e) => {
+            const item = e.target.closest('.autocomplete-item');
+            if (!item) return;
+            const index = Number(item.dataset.index);
+            if (Number.isNaN(index)) return;
+            this.state.autocomplete.activeIndex = index;
+            this.updateAutocompleteActiveItem();
+        });
+
+        document.addEventListener('mousedown', (e) => {
+            if (box.contains(e.target) || e.target === editor) return;
+            this.hideLatexAutocomplete();
+        });
+    },
+
+    updateLatexAutocomplete() {
+        const editor = this.elements.codeEditor;
+        if (!editor || editor.disabled || !this.state.currentFile) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+        if (!this.isSourceViewVisible()) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+        if (editor.selectionStart === null || editor.selectionStart !== editor.selectionEnd) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+
+        const context = this.getAutocompleteContext(editor.value, editor.selectionStart);
+        if (!context) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+
+        let items = [];
+        if (context.type === 'command') {
+            items = this.getLatexCommandSuggestions(context.query);
+        } else if (context.type === 'citekey') {
+            items = this.getCitationKeySuggestions(context.query);
+        }
+
+        if (!items.length) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+
+        const firstEnabled = items.findIndex(item => !item.disabled);
+        if (firstEnabled < 0) {
+            this.hideLatexAutocomplete();
+            return;
+        }
+
+        this.state.autocomplete.visible = true;
+        this.state.autocomplete.mode = context.type;
+        this.state.autocomplete.items = items;
+        this.state.autocomplete.activeIndex = firstEnabled;
+        this.state.autocomplete.context = context;
+        this.renderLatexAutocomplete();
+        this.positionLatexAutocomplete();
+    },
+
+    renderLatexAutocomplete() {
+        const box = this.elements.latexAutocomplete;
+        const list = this.elements.latexAutocompleteList;
+        const header = this.elements.latexAutocompleteHeader;
+        if (!box || !list || !header) return;
+
+        const { items, mode, activeIndex } = this.state.autocomplete;
+        header.textContent = mode === 'citekey' ? 'CITATION KEYS' : 'LATEX COMMANDS';
+
+        list.innerHTML = items.map((item, index) => {
+            const disabled = item.disabled ? ' disabled' : '';
+            const active = index === activeIndex ? ' active' : '';
+            const label = this.escapeHtml(item.label);
+            const meta = item.meta ? `<span class="item-meta">${this.escapeHtml(item.meta)}</span>` : '';
+            return `
+                <div class="autocomplete-item${disabled}${active}" data-index="${index}" role="option" aria-disabled="${item.disabled ? 'true' : 'false'}">
+                    <span class="item-label">${label}</span>
+                    ${meta}
+                </div>
+            `;
+        }).join('');
+
+        box.classList.add('visible');
+        box.setAttribute('aria-hidden', 'false');
+    },
+
+    updateAutocompleteActiveItem() {
+        const list = this.elements.latexAutocompleteList;
+        if (!list) return;
+        const items = list.querySelectorAll('.autocomplete-item');
+        items.forEach((item, index) => {
+            item.classList.toggle('active', index === this.state.autocomplete.activeIndex);
+        });
+    },
+
+    hideLatexAutocomplete() {
+        const box = this.elements.latexAutocomplete;
+        if (!box) return;
+        box.classList.remove('visible');
+        box.setAttribute('aria-hidden', 'true');
+        this.state.autocomplete.visible = false;
+        this.state.autocomplete.items = [];
+        this.state.autocomplete.activeIndex = -1;
+        this.state.autocomplete.context = null;
+    },
+
+    handleAutocompleteKeydown(e) {
+        if (!this.state.autocomplete.visible) return;
+
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            const direction = e.key === 'ArrowDown' ? 1 : -1;
+            this.moveAutocompleteSelection(direction);
+            return;
+        }
+
+        if (e.key === 'Enter' || e.key === 'Tab') {
+            const selected = this.state.autocomplete.items[this.state.autocomplete.activeIndex];
+            if (selected && !selected.disabled) {
+                e.preventDefault();
+                this.applyAutocompleteItem(selected);
+            }
+            return;
+        }
+
+        if (e.key === 'Escape') {
+            e.preventDefault();
+            this.hideLatexAutocomplete();
+        }
+    },
+
+    moveAutocompleteSelection(direction) {
+        const items = this.state.autocomplete.items;
+        if (!items.length) return;
+        let index = this.state.autocomplete.activeIndex;
+        for (let i = 0; i < items.length; i += 1) {
+            index = (index + direction + items.length) % items.length;
+            if (!items[index].disabled) {
+                this.state.autocomplete.activeIndex = index;
+                this.updateAutocompleteActiveItem();
+                return;
+            }
+        }
+    },
+
+    applyAutocompleteItem(item) {
+        const editor = this.elements.codeEditor;
+        if (!editor) return;
+        const cursor = editor.selectionStart;
+        if (cursor === null) return;
+
+        const context = this.getAutocompleteContext(editor.value, cursor);
+        if (!context) return;
+
+        const text = editor.value;
+        let insertText = item.insertText || item.label;
+
+        if (context.type === 'command') {
+            const start = context.replaceStart;
+            const end = context.replaceEnd;
+            const updated = text.slice(0, start) + insertText + text.slice(end);
+            editor.value = updated;
+            const cursorPos = start + insertText.length + (item.cursorOffset || 0);
+            editor.focus();
+            editor.setSelectionRange(cursorPos, cursorPos);
+        } else if (context.type === 'citekey') {
+            const start = context.replaceStart;
+            const end = context.replaceEnd;
+            const updated = text.slice(0, start) + insertText + text.slice(end);
+            editor.value = updated;
+            const cursorPos = start + insertText.length;
+            editor.focus();
+            editor.setSelectionRange(cursorPos, cursorPos);
+        }
+
+        this.hideLatexAutocomplete();
+        this.handleEditorInput();
+    },
+
+    positionLatexAutocomplete() {
+        const box = this.elements.latexAutocomplete;
+        const editor = this.elements.codeEditor;
+        if (!box || !editor || !this.state.autocomplete.visible) return;
+        if (!this.elements.sourceView) return;
+
+        const coords = this.getCaretCoordinates(editor, editor.selectionStart || 0);
+        const sourceRect = this.elements.sourceView.getBoundingClientRect();
+        const editorRect = editor.getBoundingClientRect();
+        let left = editorRect.left - sourceRect.left + coords.left + 6;
+        let top = editorRect.top - sourceRect.top + coords.top + coords.height + 6;
+
+        const maxLeft = this.elements.sourceView.clientWidth - box.offsetWidth - 12;
+        if (maxLeft > 0) {
+            left = Math.min(Math.max(left, 8), maxLeft);
+        }
+
+        const belowMax = this.elements.sourceView.clientHeight - box.offsetHeight - 8;
+        if (top > belowMax && coords.top > box.offsetHeight) {
+            top = editorRect.top - sourceRect.top + coords.top - box.offsetHeight - 8;
+        }
+        if (belowMax > 0) {
+            top = Math.min(Math.max(top, 8), belowMax);
+        }
+
+        box.style.left = `${left}px`;
+        box.style.top = `${top}px`;
+    },
+
+    getCaretCoordinates(textarea, position) {
+        if (!this.state.autocompleteMirror) {
+            const mirror = document.createElement('div');
+            mirror.style.position = 'absolute';
+            mirror.style.visibility = 'hidden';
+            mirror.style.whiteSpace = 'pre-wrap';
+            mirror.style.wordWrap = 'break-word';
+            mirror.style.overflow = 'hidden';
+            mirror.style.top = '-9999px';
+            mirror.style.left = '-9999px';
+            document.body.appendChild(mirror);
+            this.state.autocompleteMirror = mirror;
+        }
+
+        const mirror = this.state.autocompleteMirror;
+        const style = window.getComputedStyle(textarea);
+        const props = [
+            'boxSizing',
+            'fontFamily',
+            'fontSize',
+            'fontWeight',
+            'fontStyle',
+            'letterSpacing',
+            'textTransform',
+            'textIndent',
+            'lineHeight',
+            'paddingTop',
+            'paddingRight',
+            'paddingBottom',
+            'paddingLeft',
+            'borderTopWidth',
+            'borderRightWidth',
+            'borderBottomWidth',
+            'borderLeftWidth',
+            'tabSize'
+        ];
+
+        props.forEach((prop) => {
+            mirror.style[prop] = style[prop];
+        });
+
+        mirror.style.width = style.width;
+        mirror.textContent = textarea.value.substring(0, position);
+        const span = document.createElement('span');
+        span.textContent = '\u200b';
+        mirror.appendChild(span);
+
+        const top = span.offsetTop - textarea.scrollTop;
+        const left = span.offsetLeft - textarea.scrollLeft;
+        const height = parseFloat(style.lineHeight) || span.offsetHeight || 16;
+
+        mirror.innerHTML = '';
+        return { top, left, height };
+    },
+
+    getAutocompleteContext(text, cursor) {
+        const before = text.slice(0, cursor);
+        const citeMatch = before.match(/\\cite[a-zA-Z*]*\{([^}]*)$/);
+        if (citeMatch) {
+            const matchText = citeMatch[0];
+            const matchStart = before.length - matchText.length;
+            const braceIndex = matchText.lastIndexOf('{');
+            const insideStart = matchStart + braceIndex + 1;
+            const insideValue = citeMatch[1];
+            const lastComma = insideValue.lastIndexOf(',');
+            let replaceStart = insideStart;
+            if (lastComma >= 0) {
+                replaceStart = insideStart + lastComma + 1;
+                const afterComma = insideValue.slice(lastComma + 1);
+                const leadingSpaces = afterComma.match(/^\s*/)?.[0]?.length || 0;
+                replaceStart += leadingSpaces;
+            }
+            const query = insideValue.slice(lastComma + 1).trim();
+            return {
+                type: 'citekey',
+                query,
+                replaceStart,
+                replaceEnd: cursor
+            };
+        }
+
+        const commandMatch = before.match(/\\[a-zA-Z]*$/);
+        if (commandMatch) {
+            const matchText = commandMatch[0];
+            const matchStart = before.length - matchText.length;
+            return {
+                type: 'command',
+                query: matchText.slice(1),
+                replaceStart: matchStart,
+                replaceEnd: cursor
+            };
+        }
+
+        return null;
+    },
+
+    getLatexCommandSuggestions(query) {
+        const q = (query || '').toLowerCase();
+        return this.latexCommandSuggestions
+            .filter(item => item.label.toLowerCase().includes(q))
+            .slice(0, 10);
+    },
+
+    getCitationKeySuggestions(query) {
+        if (!this.state.citationKeys.length) {
+            const bibContent = Object.entries(this.state.fileContents)
+                .filter(([name]) => name.toLowerCase().endsWith('.bib'))
+                .map(([, content]) => content)
+                .join('\n');
+            if (bibContent) {
+                this.updateCitationKeysFromBibContent(bibContent);
+            }
+        }
+
+        const keys = this.state.citationKeys;
+        if (!keys.length) return [];
+
+        const q = (query || '').toLowerCase();
+        return keys
+            .filter((key) => key.toLowerCase().includes(q))
+            .slice(0, 12)
+            .map((key) => ({
+                label: key,
+                insertText: key,
+                meta: 'bib'
+            }));
+    },
+
+    updateCitationKeysFromBibContent(content) {
+        const keys = [];
+        const regex = /@\w+\s*\{\s*([^,\s]+)\s*,/g;
+        let match;
+        while ((match = regex.exec(content)) !== null) {
+            keys.push(match[1]);
+        }
+        if (!keys.length) return;
+        const existing = new Set(this.state.citationKeys);
+        keys.forEach(key => existing.add(key));
+        this.state.citationKeys = Array.from(existing).sort();
+    },
+
+    isSourceViewVisible() {
+        if (window.innerWidth <= 768) {
+            return this.elements.editorContentArea?.classList.contains('show-source');
+        }
+        return true;
     },
 
     formatFileSize(bytes) {
@@ -2404,6 +2826,9 @@ const EditorController = {
                 const ok = ProjectManager.saveLocalFile(filename, content);
                 if (!ok) throw new Error('Save failed');
                 this.saveVersionSnapshot(filename, content, 'manual');
+                if (filename.toLowerCase().endsWith('.bib')) {
+                    this.updateCitationKeysFromBibContent(content);
+                }
                 if (this.getActiveProject()?.id) {
                     ProjectManager.touchProject(this.getActiveProject().id);
                 }
@@ -2417,6 +2842,9 @@ const EditorController = {
             });
             if (!res.ok) throw new Error('Save failed');
             this.saveVersionSnapshot(filename, content, 'manual');
+            if (filename.toLowerCase().endsWith('.bib')) {
+                this.updateCitationKeysFromBibContent(content);
+            }
             if (this.getActiveProject()?.id) {
                 ProjectManager.touchProject(this.getActiveProject().id);
             }
@@ -3178,14 +3606,17 @@ const EditorController = {
     async loadCitationMap() {
         if (this.isLocalProject()) {
             this.state.citationMap = {};
+            this.state.citationKeys = [];
             return;
         }
         try {
             const res = await fetch(this.withProjectParam(`${API_BASE}/api/citations/map`));
             const data = await res.json();
             this.state.citationMap = data.mapping || {};
+            this.state.citationKeys = Object.keys(this.state.citationMap).sort();
         } catch (e) {
             console.error("Failed to load citation map", e);
+            this.state.citationKeys = [];
         }
     },
 

@@ -2155,6 +2155,73 @@ body {
     background: #4a4a4a;
 }
 
+.latex-autocomplete {
+    position: absolute;
+    top: 0;
+    left: 0;
+    display: none;
+    min-width: 220px;
+    max-width: 320px;
+    max-height: 240px;
+    background: rgba(6, 10, 18, 0.98);
+    border: 1px solid rgba(0, 255, 255, 0.35);
+    border-radius: 10px;
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(0, 255, 255, 0.2);
+    z-index: 20;
+    overflow: hidden;
+    backdrop-filter: blur(6px);
+}
+
+.latex-autocomplete.visible {
+    display: block;
+}
+
+.autocomplete-header {
+    padding: 8px 12px;
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(160, 255, 255, 0.9);
+    background: linear-gradient(90deg, rgba(0, 255, 255, 0.18), rgba(0, 0, 0, 0));
+    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+}
+
+.autocomplete-list {
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.autocomplete-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 8px 12px;
+    font-family: 'VT323', monospace;
+    font-size: 1rem;
+    color: #e8f6ff;
+    cursor: pointer;
+}
+
+.autocomplete-item:hover,
+.autocomplete-item.active {
+    background: rgba(0, 255, 255, 0.14);
+    color: #ffffff;
+}
+
+.autocomplete-item.disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.autocomplete-item .item-meta {
+    font-size: 0.7rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: rgba(120, 220, 230, 0.8);
+    flex-shrink: 0;
+}
+
 .preview-view {
     flex: 1;
     min-width: 200px;
@@ -4197,6 +4264,15 @@ body {
         letter-spacing: 2px;
     }
 
+    .latex-autocomplete {
+        min-width: 180px;
+        max-width: 260px;
+    }
+
+    .autocomplete-item {
+        font-size: 0.95rem;
+    }
+
     .header-stats {
         display: flex;
         flex-wrap: nowrap;
@@ -4582,6 +4658,16 @@ body {
     .code-editor {
         font-size: 12px;
         padding: 12px 10px;
+    }
+
+    .latex-autocomplete {
+        min-width: 160px;
+        max-width: 220px;
+    }
+
+    .autocomplete-item {
+        font-size: 0.9rem;
+        padding: 6px 10px;
     }
 
     /* Find bar mobile */
