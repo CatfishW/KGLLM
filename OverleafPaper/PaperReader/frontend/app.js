@@ -3551,8 +3551,6 @@ const CopilotController = {
         }
 
         block.style.display = 'block';
-        // Auto-expand if first time
-        if (!this.isOpen) this.open();
     },
 
     toggle() {
