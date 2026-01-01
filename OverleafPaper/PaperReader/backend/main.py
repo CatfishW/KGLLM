@@ -4,6 +4,7 @@ Paper Reader Backend - FastAPI Server
 """
 import os
 import io
+import re
 import hashlib
 from pathlib import Path
 from typing import Optional
@@ -29,6 +30,8 @@ PAPERS_DIR = PROJECT_ROOT / "Papers"
 THUMBNAILS_DIR = Path(__file__).parent / "thumbnails"
 THUMBNAIL_WIDTH = 280
 THUMBNAIL_HEIGHT = 400
+PROJECTS_DIR = Path(__file__).parent / "projects"
+PROJECT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]{0,80}$")
 
 # Create thumbnails directory
 THUMBNAILS_DIR.mkdir(exist_ok=True)
@@ -50,6 +53,18 @@ app.add_middleware(
 
 # Initialize Compiler
 latex_compiler = LatexCompiler(str(PROJECT_ROOT))
+
+def resolve_project_root(project_id: Optional[str]) -> Path:
+    if not project_id or project_id in {"server", "default"}:
+        return PROJECT_ROOT
+
+    project_id = project_id.strip()
+    if not PROJECT_ID_PATTERN.match(project_id):
+        raise HTTPException(status_code=400, detail="Invalid project_id")
+
+    project_root = PROJECTS_DIR / project_id
+    project_root.mkdir(parents=True, exist_ok=True)
+    return project_root
 
 # Presence Manager
 class PresenceManager:
@@ -308,12 +323,13 @@ async def regenerate_thumbnails():
 # ==========================================
 
 @app.get("/api/project/files")
-async def list_project_files():
+async def list_project_files(project_id: Optional[str] = Query(None, description="Project ID")):
     """List .tex and .bib files in the project root."""
+    project_root = resolve_project_root(project_id)
     files = []
     excludes = {".git", ".idea", "__pycache__", "venv", "node_modules"}
     
-    for item in PROJECT_ROOT.iterdir():
+    for item in project_root.iterdir():
         if item.is_dir():
             continue
         if item.name.startswith(('.', '_')):
@@ -330,9 +346,10 @@ async def list_project_files():
     return {"files": files}
 
 @app.post("/api/compile")
-async def compile_tex(request: CompileRequest):
+async def compile_tex(request: CompileRequest, project_id: Optional[str] = Query(None, description="Project ID")):
     """Compile a tex file."""
-    result = await latex_compiler.compile(request.filename)
+    project_root = resolve_project_root(project_id)
+    result = await latex_compiler.compile(request.filename, root_dir=project_root)
     return result
 
 class SyncTexRequest(BaseModel):
@@ -342,7 +359,7 @@ class SyncTexRequest(BaseModel):
     y: float
 
 @app.post("/api/synctex")
-async def synctex_to_source(request: SyncTexRequest):
+async def synctex_to_source(request: SyncTexRequest, project_id: Optional[str] = Query(None, description="Project ID")):
     """
     Given PDF coordinates, return TeX source location.
     Uses 'synctex edit' command.
@@ -351,7 +368,8 @@ async def synctex_to_source(request: SyncTexRequest):
     import re
     
     # PDF is usually in PROJECT_ROOT
-    pdf_path = PROJECT_ROOT / request.filename
+    project_root = resolve_project_root(project_id)
+    pdf_path = project_root / request.filename
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="PDF not found")
         
@@ -363,7 +381,7 @@ async def synctex_to_source(request: SyncTexRequest):
     ]
     
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=project_root)
         output = proc.stdout
         
         input_match = re.search(r"Input:(.*)", output)
@@ -389,7 +407,7 @@ class ForwardSyncRequest(BaseModel):
     pdf_file: str
 
 @app.post("/api/synctex/forward")
-async def synctex_to_pdf(request: ForwardSyncRequest):
+async def synctex_to_pdf(request: ForwardSyncRequest, project_id: Optional[str] = Query(None, description="Project ID")):
     """
     Given TeX source location, return PDF coordinates.
     Uses 'synctex view' command.
@@ -405,7 +423,8 @@ async def synctex_to_pdf(request: ForwardSyncRequest):
     ]
     
     try:
-        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=PROJECT_ROOT)
+        project_root = resolve_project_root(project_id)
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=project_root)
         output = proc.stdout
         
         page_match = re.search(r"Page:(\d+)", output)
@@ -426,9 +445,10 @@ async def synctex_to_pdf(request: ForwardSyncRequest):
         return {"success": False, "error": str(e)}
 
 @app.get("/api/citations/map")
-async def get_citation_map():
+async def get_citation_map(project_id: Optional[str] = Query(None, description="Project ID")):
     """Parse ref.bib and map to existing papers."""
-    bib_file = PROJECT_ROOT / "ref.bib"
+    project_root = resolve_project_root(project_id)
+    bib_file = project_root / "ref.bib"
     
     papers = []
     for pdf_file in PAPERS_DIR.glob("*.pdf"):
@@ -449,24 +469,26 @@ async def get_citation_map():
     }
 
 @app.get("/api/project/file/{filename}")
-async def get_project_file(filename: str):
+async def get_project_file(filename: str, project_id: Optional[str] = Query(None, description="Project ID")):
     """Serve a file from the project root (e.g. generated PDF)."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
         
-    file_path = PROJECT_ROOT / filename
+    project_root = resolve_project_root(project_id)
+    file_path = project_root / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
         
     return FileResponse(file_path)
 
 @app.get("/api/project/content/{filename}")
-async def get_project_file_content(filename: str):
+async def get_project_file_content(filename: str, project_id: Optional[str] = Query(None, description="Project ID")):
     """Read text content of a file."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
         
-    file_path = PROJECT_ROOT / filename
+    project_root = resolve_project_root(project_id)
+    file_path = project_root / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
     
@@ -481,12 +503,13 @@ class SaveRequest(BaseModel):
     content: str
 
 @app.post("/api/project/save")
-async def save_project_file(request: SaveRequest):
+async def save_project_file(request: SaveRequest, project_id: Optional[str] = Query(None, description="Project ID")):
     """Save text content to a file."""
     if ".." in request.filename or "/" in request.filename or "\\" in request.filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
         
-    file_path = PROJECT_ROOT / request.filename
+    project_root = resolve_project_root(project_id)
+    file_path = project_root / request.filename
     try:
         file_path.write_text(request.content, encoding='utf-8')
         return {"success": True}
@@ -494,13 +517,14 @@ async def save_project_file(request: SaveRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/project/upload")
-async def upload_project_file(file: UploadFile = File(...)):
+async def upload_project_file(project_id: Optional[str] = Query(None, description="Project ID"), file: UploadFile = File(...)):
     """Upload a file to PROJECT_ROOT."""
     filename = file.filename
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
         
-    file_path = PROJECT_ROOT / filename
+    project_root = resolve_project_root(project_id)
+    file_path = project_root / filename
     try:
         content = await file.read()
         with open(file_path, "wb") as f:
@@ -510,17 +534,18 @@ async def upload_project_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/project/file/{filename}")
-async def delete_project_file(filename: str):
+async def delete_project_file(filename: str, project_id: Optional[str] = Query(None, description="Project ID")):
     """Delete a file from PROJECT_ROOT."""
     if ".." in filename or "/" in filename or "\\" in filename:
         raise HTTPException(status_code=400, detail="Invalid filename")
         
-    file_path = PROJECT_ROOT / filename
+    project_root = resolve_project_root(project_id)
+    file_path = project_root / filename
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File not found")
         
     # Safety check: Don't delete compilation tools or main server
-    if filename in ["main.py", "latex_compiler.py", "citation_mapper.py", "requirements.txt"]:
+    if project_root == PROJECT_ROOT and filename in ["main.py", "latex_compiler.py", "citation_mapper.py", "requirements.txt"]:
         raise HTTPException(status_code=403, detail="Cannot delete system files")
 
     try:

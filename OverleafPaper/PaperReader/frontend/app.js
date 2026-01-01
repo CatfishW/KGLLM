@@ -2071,6 +2071,7 @@ const EditorController = {
         this.loadHistory();
         this.loadVersionHistory();
         this.loadComments();
+        this.loadCitationMap();
         this.renderComments();
         this.updateEditorStats();
         this.buildOutlineFromContent('');
@@ -3172,10 +3173,14 @@ const EditorController = {
     },
 
     async loadCitationMap() {
+        if (this.isLocalProject()) {
+            this.state.citationMap = {};
+            return;
+        }
         try {
-            const res = await fetch(`${API_BASE}/api/citations/map`);
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/citations/map`));
             const data = await res.json();
-            this.state.citationMap = data.mapping;
+            this.state.citationMap = data.mapping || {};
         } catch (e) {
             console.error("Failed to load citation map", e);
         }
@@ -3486,11 +3491,15 @@ const EditorController = {
         // Need to find which PDF we are viewing. 
         // lastCompiledPdfUrl is something like http://.../api/project/file/lam_main_latest.pdf
         if (!this.state.lastCompiledPdfUrl) return;
+        if (this.isLocalProject()) {
+            showToast('SyncTeX requires a server project');
+            return;
+        }
 
         const pdfName = this.state.lastCompiledPdfUrl.split('/').pop();
 
         try {
-            const res = await fetch(`${API_BASE}/api/synctex`, {
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/synctex`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -4009,6 +4018,10 @@ const EditorController = {
             showToast("Open a .tex file to sync");
             return;
         }
+        if (this.isLocalProject()) {
+            showToast('SyncTeX requires a server project');
+            return;
+        }
 
         const line = this.getCurrentLine();
         const pdfName = this.state.lastCompiledPdfUrl?.split('/').pop();
@@ -4019,7 +4032,7 @@ const EditorController = {
         }
 
         try {
-            const res = await fetch(`${API_BASE}/api/synctex/forward`, {
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/synctex/forward`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

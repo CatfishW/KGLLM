@@ -3,6 +3,7 @@ import subprocess
 import shutil
 import logging
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger("uvicorn")
 
@@ -30,7 +31,7 @@ class LatexCompiler:
         """Check if pdflatex is available in system PATH."""
         return shutil.which("pdflatex") is not None
 
-    async def compile(self, tex_filename: str) -> dict:
+    async def compile(self, tex_filename: str, root_dir: Optional[Path] = None) -> dict:
         """
         Compile a tex file using pdflatex -> bibtex -> pdflatex -> pdflatex sequence.
         Returns a dict with status and logs.
@@ -41,7 +42,8 @@ class LatexCompiler:
                 "log": "Error: pdflatex not found in system PATH. Please install TeX Live or MiKTeX."
             }
 
-        tex_file = self.root_dir / tex_filename
+        compile_root = Path(root_dir) if root_dir else self.root_dir
+        tex_file = compile_root / tex_filename
         if not tex_file.exists():
             return {"success": False, "log": f"Error: File {tex_filename} not found."}
 
@@ -60,7 +62,7 @@ class LatexCompiler:
             logs.append(">> Running pdflatex (pass 1)...")
             proc = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", "-synctex=1", tex_filename],
-                cwd=self.root_dir,
+                cwd=compile_root,
                 capture_output=True,
                 text=True
             )
@@ -71,11 +73,11 @@ class LatexCompiler:
             
             # 2. bibtex (if aux exists)
             aux_file = tex_filename.replace(".tex", ".aux")
-            if (self.root_dir / aux_file).exists():
+            if (compile_root / aux_file).exists():
                 logs.append(">> Running bibtex...")
                 proc = subprocess.run(
                     ["bibtex", aux_file.replace(".aux", "")],
-                    cwd=self.root_dir,
+                    cwd=compile_root,
                     capture_output=True,
                     text=True
                 )
@@ -86,7 +88,7 @@ class LatexCompiler:
             logs.append(">> Running pdflatex (pass 2)...")
             proc = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", "-synctex=1", tex_filename],
-                cwd=self.root_dir,
+                cwd=compile_root,
                 capture_output=True,
                 text=True
             )
@@ -96,14 +98,14 @@ class LatexCompiler:
             logs.append(">> Running pdflatex (pass 3)...")
             proc = subprocess.run(
                 ["pdflatex", "-interaction=nonstopmode", "-synctex=1", tex_filename],
-                cwd=self.root_dir,
+                cwd=compile_root,
                 capture_output=True,
                 text=True
             )
             logs.append(proc.stdout)
             
             pdf_filename = tex_filename.replace(".tex", ".pdf")
-            pdf_path = self.root_dir / pdf_filename
+            pdf_path = compile_root / pdf_filename
             
             if pdf_path.exists():
                 return {
