@@ -3440,13 +3440,18 @@ const EditorController = {
         if (!entry) return;
 
         this.state.selectedVersionId = id;
+        const date = new Date(entry.timestamp);
+        const versions = this.state.versionHistory.filter(v => v.filename === entry.filename);
+        const index = versions.findIndex(v => v.id === entry.id);
+        const baseEntry = index >= 0 ? versions[index + 1] : null;
+        const baseLabel = baseEntry ? 'diff vs previous' : 'diff vs current';
+
         if (this.elements.historyPreviewTitle) {
-            const date = new Date(entry.timestamp);
-            this.elements.historyPreviewTitle.textContent = `${entry.filename} - ${date.toLocaleString()} (diff vs current)`;
+            this.elements.historyPreviewTitle.textContent = `${entry.filename} - ${date.toLocaleString()} (${baseLabel})`;
         }
         if (this.elements.historyPreviewContent) {
-            const currentContent = this.getDiffBaseContent(entry.filename);
-            const diffHtml = this.renderDiffPreview(entry.content || '', currentContent || '');
+            const baseContent = baseEntry ? (baseEntry.content || '') : this.getDiffBaseContent(entry.filename);
+            const diffHtml = this.renderDiffPreview(baseContent, entry.content || '');
             this.elements.historyPreviewContent.innerHTML = diffHtml;
             this.elements.historyPreviewContent.classList.add('diff-view');
         }
