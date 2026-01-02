@@ -6,9 +6,10 @@ import os
 import io
 import re
 import hashlib
+import httpx
 from pathlib import Path
 from typing import Optional
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -115,6 +116,14 @@ def get_file_hash(filepath: Path) -> str:
     stat = filepath.stat()
     content = f"{filepath.name}_{stat.st_size}_{stat.st_mtime}"
     return hashlib.md5(content.encode()).hexdigest()[:12]
+
+
+def build_llm_headers(request: Request) -> dict:
+    headers = {"Content-Type": "application/json"}
+    auth = request.headers.get("authorization")
+    if auth:
+        headers["Authorization"] = auth
+    return headers
 
 
 def generate_thumbnail(pdf_path: Path, force: bool = False) -> Path:
@@ -480,6 +489,35 @@ async def get_project_file(filename: str, project_id: Optional[str] = Query(None
         raise HTTPException(status_code=404, detail="File not found")
         
     return FileResponse(file_path)
+
+
+@app.post("/api/llm/chat")
+async def proxy_llm_chat(request: Request):
+    payload = await request.json()
+    headers = build_llm_headers(request)
+    url = "https://game.agaii.org/llm/v1/chat/completions"
+
+    try:
+        if payload.get("stream"):
+            async def stream():
+                async with httpx.AsyncClient(timeout=None) as client:
+                    async with client.stream("POST", url, json=payload, headers=headers) as resp:
+                        if resp.status_code >= 400:
+                            detail = await resp.aread()
+                            raise HTTPException(status_code=resp.status_code, detail=detail.decode())
+                        async for chunk in resp.aiter_bytes():
+                            if chunk:
+                                yield chunk
+
+            return StreamingResponse(stream(), media_type="text/event-stream")
+
+        async with httpx.AsyncClient(timeout=60) as client:
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return JSONResponse(resp.json())
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM proxy error: {exc}") from exc
 
 @app.get("/api/project/content/{filename}")
 async def get_project_file_content(filename: str, project_id: Optional[str] = Query(None, description="Project ID")):

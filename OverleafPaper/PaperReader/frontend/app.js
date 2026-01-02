@@ -2063,6 +2063,45 @@ const EditorController = {
         return `${baseKey}_${projectId}`;
     },
 
+    getCompiledPdfUrl(filename) {
+        return this.withProjectParam(`${API_BASE}/api/project/file/${filename}`);
+    },
+
+    saveLastCompiledPdf(filename) {
+        if (!filename) return;
+        try {
+            const key = this.getProjectStorageKey('paperreader_last_compiled_pdf');
+            localStorage.setItem(key, JSON.stringify({ filename, savedAt: Date.now() }));
+        } catch (e) {
+            console.warn('Failed to save last compiled PDF', e);
+        }
+    },
+
+    loadLastCompiledPdf() {
+        try {
+            const key = this.getProjectStorageKey('paperreader_last_compiled_pdf');
+            const raw = localStorage.getItem(key);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (!data?.filename) return null;
+            return data;
+        } catch (e) {
+            console.warn('Failed to load last compiled PDF', e);
+            return null;
+        }
+    },
+
+    restoreLastCompiledPdf() {
+        if (this.isLocalProject()) return;
+        if (this.state.lastCompiledPdfUrl) return;
+        const saved = this.loadLastCompiledPdf();
+        if (!saved) return;
+        const url = this.getCompiledPdfUrl(saved.filename);
+        this.state.lastCompiledPdfUrl = url;
+        this.elements.btnDownloadCompiled.disabled = false;
+        this.loadPDF(saved.filename);
+    },
+
     withProjectParam(url) {
         const project = this.getActiveProject();
         if (!project || project.type !== 'remote' || !project.id || project.id === 'server') return url;
@@ -2132,6 +2171,7 @@ const EditorController = {
             }
             this.renderFileList();
             this.updateHistoryFileOptions();
+            this.restoreLastCompiledPdf();
 
             if (this.state.currentFile) {
                 const exists = this.state.files.find(f => f.name === this.state.currentFile);
@@ -3674,9 +3714,11 @@ const EditorController = {
                 }, 3000);
 
                 // Show PDF
-                this.state.lastCompiledPdfUrl = this.withProjectParam(`${API_BASE}/api/project/file/${result.pdf_path.split(/[\\/]/).pop()}`);
+                const pdfFilename = result.pdf_path.split(/[\\/]/).pop();
+                this.state.lastCompiledPdfUrl = this.getCompiledPdfUrl(pdfFilename);
+                this.saveLastCompiledPdf(pdfFilename);
                 this.elements.btnDownloadCompiled.disabled = false;
-                this.loadPDF(result.pdf_path); // path on server, need endpoint to fetch
+                this.loadPDF(pdfFilename); // filename on server, resolved via API
                 this.saveToHistory('Compiled document', target);
 
                 // Success animation on button
@@ -5650,7 +5692,9 @@ const CopilotController = {
     },
 
     async callMLLMStream(messages, image = null, onChunk) {
-        const apiUrl = 'https://game.agaii.org/llm/v1/chat/completions';
+        const apiUrl = isLocalDev
+            ? 'http://127.0.0.1:22222/api/llm/chat'
+            : `${window.location.protocol}//${window.location.hostname}/api/llm/chat`;
 
         const requestBody = {
             model: 'gpt-4o-mini',
