@@ -5304,8 +5304,8 @@ const CopilotController = {
 
     loadLlmSettings() {
         const defaultBase = isLocalDev
-            ? 'http://127.0.0.1:22222/api/llm'
-            : `${window.location.protocol}//${window.location.hostname}/api/llm`;
+            ? 'http://127.0.0.1:22222/llm/v1'
+            : 'https://game.agaii.org/llm/v1';
         const base = localStorage.getItem('paperreader_llm_base') || defaultBase;
         const model = localStorage.getItem('paperreader_llm_model') || '';
         this.llmBase = base;
