@@ -5368,11 +5368,31 @@ const CopilotController = {
 
     resolveLlmEndpoint(base, type) {
         const normalized = this.normalizeLlmBase(base);
+        if (this.shouldUseProxy(normalized)) {
+            const proxyBase = this.getProxyBase();
+            return `${proxyBase}/${type}`;
+        }
         if (normalized.includes('/api/llm')) {
             return `${normalized}/${type}`;
         }
         if (type === 'chat') return `${normalized}/chat/completions`;
         return `${normalized}/models`;
+    },
+
+    getProxyBase() {
+        return `${window.location.protocol}//${window.location.hostname}/api/llm`;
+    },
+
+    shouldUseProxy(base) {
+        if (!base) return false;
+        if (base.includes('/api/llm')) return false;
+        try {
+            const targetOrigin = new URL(base).origin;
+            if (targetOrigin === window.location.origin) return false;
+        } catch (e) {
+            return false;
+        }
+        return base.includes('game.agaii.org/llm');
     },
 
     async refreshModels(force = false) {
