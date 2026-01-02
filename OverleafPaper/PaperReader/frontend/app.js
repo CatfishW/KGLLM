@@ -1583,6 +1583,10 @@ const EditorController = {
         lastCompileAt: 0,
         currentPreviewPage: 1,
         pdfScrollHandler: null,
+        editorMode: 'code',
+        wrapEnabled: true,
+        visualSyncTimer: null,
+        visualSyncLock: false,
         autocomplete: {
             visible: false,
             mode: null,
@@ -1606,6 +1610,11 @@ const EditorController = {
         fileUploadInput: document.getElementById('file-upload-input'),
         btnDelete: document.getElementById('btn-delete'),
         codeEditor: document.getElementById('code-editor'),
+        visualEditor: document.getElementById('visual-editor'),
+        visualToolbar: document.getElementById('visual-toolbar'),
+        btnModeCode: document.getElementById('btn-mode-code'),
+        btnModeVisual: document.getElementById('btn-mode-visual'),
+        btnLineWrap: document.getElementById('btn-line-wrap'),
         latexAutocomplete: document.getElementById('latex-autocomplete'),
         latexAutocompleteHeader: document.getElementById('latex-autocomplete-header'),
         latexAutocompleteList: document.getElementById('latex-autocomplete-list'),
@@ -1937,6 +1946,12 @@ const EditorController = {
 
         // Line numbers toggle
         this.elements.btnLineNumbers?.addEventListener('click', () => this.toggleLineNumbers());
+        this.elements.btnLineWrap?.addEventListener('click', () => this.toggleLineWrap());
+        this.elements.btnModeCode?.addEventListener('click', () => this.setEditorMode('code'));
+        this.elements.btnModeVisual?.addEventListener('click', () => this.setEditorMode('visual'));
+        this.elements.visualToolbar?.addEventListener('click', (e) => this.handleVisualToolbar(e));
+        this.elements.visualEditor?.addEventListener('input', () => this.handleVisualInput());
+        this.elements.visualEditor?.addEventListener('keydown', (e) => this.handleVisualKeydown(e));
         this.setupLatexAutocomplete();
 
         // Panel resizer
@@ -2006,6 +2021,9 @@ const EditorController = {
 
         // Load line numbers preference
         this.loadLineNumbersPreference();
+        this.applyLineWrap();
+        this.applyEditorMode();
+        this.loadEditorPreferences();
 
         // Load citation map
         await this.loadCitationMap();
@@ -2279,6 +2297,10 @@ const EditorController = {
             this.elements.codeEditor.value = '';
             this.elements.codeEditor.disabled = true;
         }
+        if (this.elements.visualEditor) {
+            this.elements.visualEditor.innerHTML = '';
+            this.setVisualEditorEnabled(false);
+        }
         this.elements.btnSave.disabled = true;
         this.elements.btnDelete.style.display = 'none';
         this.elements.btnDownloadCompiled.disabled = true;
@@ -2400,7 +2422,8 @@ const EditorController = {
 
         // Enable/Disable controls
         this.elements.btnSave.disabled = false;
-        this.elements.codeEditor.disabled = false;
+        this.elements.codeEditor.disabled = this.state.editorMode === 'visual';
+        this.setVisualEditorEnabled(true);
         this.elements.btnDelete.style.display = 'inline-block';
 
         // Load content
@@ -2422,6 +2445,9 @@ const EditorController = {
                 this.updateEditorStats();
                 this.buildOutlineFromContent(content);
                 this.renderComments();
+                if (this.state.editorMode === 'visual') {
+                    this.syncCodeToVisual();
+                }
                 return;
             }
 
@@ -2444,6 +2470,9 @@ const EditorController = {
             this.updateEditorStats();
             this.buildOutlineFromContent(data.content);
             this.renderComments();
+            if (this.state.editorMode === 'visual') {
+                this.syncCodeToVisual();
+            }
         } catch (e) {
             console.error(e);
             this.elements.codeEditor.value = "// Error loading content or binary file";
@@ -2485,7 +2514,7 @@ const EditorController = {
     updateEditorStats() {
         const statsEl = this.elements.editorStats;
         const editor = this.elements.codeEditor;
-        if (!statsEl || !editor || editor.disabled) {
+        if (!statsEl || !editor || !this.state.currentFile) {
             if (statsEl) statsEl.textContent = 'WORDS 0 • LINES 0 • CHARS 0';
             return;
         }
@@ -2868,6 +2897,9 @@ const EditorController = {
     },
 
     isSourceViewVisible() {
+        if (this.state.editorMode === 'visual') {
+            return false;
+        }
         if (window.innerWidth <= 768) {
             return this.elements.editorContentArea?.classList.contains('show-source');
         }
@@ -3559,6 +3591,9 @@ const EditorController = {
 
     async saveCurrent(options = {}) {
         if (!this.state.currentFile) return;
+        if (this.state.editorMode === 'visual') {
+            this.syncVisualToCode();
+        }
 
         const {
             silent = false,
@@ -3809,6 +3844,9 @@ const EditorController = {
         if (this.isLocalProject()) {
             showToast('Compile requires a server project');
             return;
+        }
+        if (this.state.editorMode === 'visual') {
+            this.syncVisualToCode();
         }
 
         // Always compile the main tex file usually, or the current one?
@@ -4461,6 +4499,299 @@ const EditorController = {
         }
         this.updatePageCount();
         this.setupPdfScrollHandler();
+    },
+
+    // ==========================================
+    // EDITOR VIEW MODES
+    // ==========================================
+
+    loadEditorPreferences() {
+        const wrapPref = localStorage.getItem('paperreader_linewrap');
+        if (wrapPref !== null) {
+            this.state.wrapEnabled = wrapPref === 'true';
+        }
+        const modePref = localStorage.getItem('paperreader_editor_mode');
+        if (modePref === 'visual' || modePref === 'code') {
+            this.state.editorMode = modePref;
+        }
+    },
+
+    applyLineWrap() {
+        const editor = this.elements.codeEditor;
+        if (!editor) return;
+        editor.classList.toggle('wrap', this.state.wrapEnabled);
+        this.elements.btnLineWrap?.classList.toggle('active', this.state.wrapEnabled);
+    },
+
+    toggleLineWrap() {
+        this.state.wrapEnabled = !this.state.wrapEnabled;
+        localStorage.setItem('paperreader_linewrap', this.state.wrapEnabled ? 'true' : 'false');
+        this.applyLineWrap();
+        showToast(this.state.wrapEnabled ? 'Line wrap on' : 'Line wrap off');
+    },
+
+    applyEditorMode() {
+        this.setEditorMode(this.state.editorMode, { silent: true });
+    },
+
+    setEditorMode(mode, options = {}) {
+        const { silent = false } = options;
+        if (mode !== 'code' && mode !== 'visual') return;
+
+        this.state.editorMode = mode;
+        localStorage.setItem('paperreader_editor_mode', mode);
+
+        this.elements.sourceView?.classList.toggle('visual-mode', mode === 'visual');
+        this.elements.btnModeCode?.classList.toggle('active', mode === 'code');
+        this.elements.btnModeVisual?.classList.toggle('active', mode === 'visual');
+
+        if (mode === 'visual') {
+            this.hideLatexAutocomplete();
+            this.syncCodeToVisual();
+            this.setVisualEditorEnabled(!!this.state.currentFile);
+            if (this.elements.codeEditor) {
+                this.elements.codeEditor.disabled = true;
+            }
+            if (document.queryCommandSupported && document.queryCommandSupported('defaultParagraphSeparator')) {
+                document.execCommand('defaultParagraphSeparator', false, 'p');
+            }
+        } else {
+            this.syncVisualToCode();
+            if (this.elements.codeEditor) {
+                this.elements.codeEditor.disabled = !this.state.currentFile;
+            }
+        }
+
+        if (!silent) {
+            showToast(mode === 'visual' ? 'Visual editor on' : 'Code editor on');
+        }
+    },
+
+    setVisualEditorEnabled(enabled) {
+        if (!this.elements.visualEditor) return;
+        this.elements.visualEditor.setAttribute('contenteditable', enabled ? 'true' : 'false');
+        this.elements.visualEditor.classList.toggle('disabled', !enabled);
+    },
+
+    handleVisualToolbar(event) {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const action = button.dataset.action;
+        if (!action) return;
+
+        if (action === 'bold') {
+            document.execCommand('bold');
+        } else if (action === 'italic') {
+            document.execCommand('italic');
+        } else if (action === 'underline') {
+            document.execCommand('underline');
+        } else if (action === 'section') {
+            document.execCommand('formatBlock', false, 'h2');
+        } else if (action === 'subsection') {
+            document.execCommand('formatBlock', false, 'h3');
+        } else if (action === 'itemize') {
+            document.execCommand('insertUnorderedList');
+        } else if (action === 'enumerate') {
+            document.execCommand('insertOrderedList');
+        }
+        this.handleVisualInput();
+    },
+
+    handleVisualKeydown(event) {
+        if (event.key === 'Tab') {
+            event.preventDefault();
+            document.execCommand('insertText', false, '    ');
+        }
+    },
+
+    handleVisualInput() {
+        if (this.state.visualSyncLock) return;
+        if (this.state.visualSyncTimer) {
+            clearTimeout(this.state.visualSyncTimer);
+        }
+        this.state.visualSyncTimer = setTimeout(() => {
+            this.syncVisualToCode();
+        }, 200);
+    },
+
+    syncCodeToVisual() {
+        if (!this.elements.visualEditor || !this.elements.codeEditor) return;
+        this.state.visualSyncLock = true;
+        const latex = this.elements.codeEditor.value || '';
+        this.elements.visualEditor.innerHTML = this.latexToVisualHtml(latex);
+        this.state.visualSyncLock = false;
+    },
+
+    syncVisualToCode() {
+        if (!this.elements.visualEditor || !this.elements.codeEditor) return;
+        this.state.visualSyncLock = true;
+        const html = this.elements.visualEditor.innerHTML || '';
+        const latex = this.visualHtmlToLatex(html);
+        this.elements.codeEditor.value = latex;
+        this.state.visualSyncLock = false;
+        this.handleEditorInput();
+    },
+
+    latexToVisualHtml(text) {
+        if (!text) return '';
+        const lines = text.split('\n');
+        const output = [];
+        let paragraph = [];
+        let listMode = null;
+
+        const flushParagraph = () => {
+            if (!paragraph.length) return;
+            const paragraphText = paragraph.join(' ');
+            output.push(`<p>${this.formatInlineLatex(paragraphText)}</p>`);
+            paragraph = [];
+        };
+
+        const openList = (type) => {
+            if (listMode === type) return;
+            closeList();
+            listMode = type;
+            output.push(type === 'ol' ? '<ol>' : '<ul>');
+        };
+
+        const closeList = () => {
+            if (!listMode) return;
+            output.push(listMode === 'ol' ? '</ol>' : '</ul>');
+            listMode = null;
+        };
+
+        lines.forEach((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                flushParagraph();
+                closeList();
+                return;
+            }
+
+            const sectionMatch = trimmed.match(/^\\section\*?\{([^}]*)\}/);
+            const subsectionMatch = trimmed.match(/^\\subsection\*?\{([^}]*)\}/);
+            const subsubMatch = trimmed.match(/^\\subsubsection\*?\{([^}]*)\}/);
+            const paragraphMatch = trimmed.match(/^\\paragraph\*?\{([^}]*)\}/);
+            const beginItemize = /^\\begin\{itemize\}/.test(trimmed);
+            const endItemize = /^\\end\{itemize\}/.test(trimmed);
+            const beginEnum = /^\\begin\{enumerate\}/.test(trimmed);
+            const endEnum = /^\\end\{enumerate\}/.test(trimmed);
+            const itemMatch = trimmed.match(/^\\item\s*(.*)/);
+
+            if (sectionMatch) {
+                flushParagraph();
+                closeList();
+                output.push(`<h2>${this.escapeHtml(sectionMatch[1])}</h2>`);
+                return;
+            }
+            if (subsectionMatch) {
+                flushParagraph();
+                closeList();
+                output.push(`<h3>${this.escapeHtml(subsectionMatch[1])}</h3>`);
+                return;
+            }
+            if (subsubMatch) {
+                flushParagraph();
+                closeList();
+                output.push(`<h4>${this.escapeHtml(subsubMatch[1])}</h4>`);
+                return;
+            }
+            if (paragraphMatch) {
+                flushParagraph();
+                closeList();
+                output.push(`<h5>${this.escapeHtml(paragraphMatch[1])}</h5>`);
+                return;
+            }
+
+            if (beginItemize) {
+                flushParagraph();
+                openList('ul');
+                return;
+            }
+            if (endItemize) {
+                flushParagraph();
+                closeList();
+                return;
+            }
+            if (beginEnum) {
+                flushParagraph();
+                openList('ol');
+                return;
+            }
+            if (endEnum) {
+                flushParagraph();
+                closeList();
+                return;
+            }
+
+            if (itemMatch) {
+                flushParagraph();
+                openList(listMode || 'ul');
+                output.push(`<li>${this.formatInlineLatex(itemMatch[1])}</li>`);
+                return;
+            }
+
+            paragraph.push(trimmed);
+        });
+
+        flushParagraph();
+        closeList();
+        return output.join('\n');
+    },
+
+    formatInlineLatex(text) {
+        let output = this.escapeHtml(text);
+        output = output.replace(/\\textbf\{([^}]*)\}/g, '<strong>$1</strong>');
+        output = output.replace(/\\textit\{([^}]*)\}/g, '<em>$1</em>');
+        output = output.replace(/\\emph\{([^}]*)\}/g, '<em>$1</em>');
+        output = output.replace(/\\underline\{([^}]*)\}/g, '<u>$1</u>');
+        output = output.replace(/\\texttt\{([^}]*)\}/g, '<code>$1</code>');
+        return output;
+    },
+
+    visualHtmlToLatex(html) {
+        const container = document.createElement('div');
+        container.innerHTML = html;
+
+        const serialize = (node) => {
+            if (node.nodeType === Node.TEXT_NODE) {
+                return node.textContent || '';
+            }
+            if (node.nodeType !== Node.ELEMENT_NODE) {
+                return '';
+            }
+
+            const tag = node.tagName.toLowerCase();
+            const children = Array.from(node.childNodes).map(serialize).join('');
+
+            if (tag === 'strong') return `\\textbf{${children}}`;
+            if (tag === 'em') return `\\emph{${children}}`;
+            if (tag === 'u') return `\\underline{${children}}`;
+            if (tag === 'code') return `\\texttt{${children}}`;
+            if (tag === 'br') return '\n';
+            if (tag === 'h2') return `\\section{${children}}\n`;
+            if (tag === 'h3') return `\\subsection{${children}}\n`;
+            if (tag === 'h4') return `\\subsubsection{${children}}\n`;
+            if (tag === 'h5') return `\\paragraph{${children}}\n`;
+
+            if (tag === 'ul' || tag === 'ol') {
+                const env = tag === 'ul' ? 'itemize' : 'enumerate';
+                const items = Array.from(node.children)
+                    .filter((child) => child.tagName && child.tagName.toLowerCase() === 'li')
+                    .map((child) => `\\item ${Array.from(child.childNodes).map(serialize).join('').trim()}`)
+                    .join('\n');
+                return `\\begin{${env}}\n${items}\n\\end{${env}}\n`;
+            }
+
+            if (tag === 'p' || tag === 'div') {
+                const content = children.trim();
+                return content ? `${content}\n\n` : '\n';
+            }
+
+            return children;
+        };
+
+        const bodyContent = Array.from(container.childNodes).map(serialize).join('').trim();
+        return bodyContent ? `${bodyContent}\n` : '';
     },
 
     // ==========================================

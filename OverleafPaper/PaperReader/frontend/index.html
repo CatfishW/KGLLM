@@ -198,6 +198,13 @@
                             <button class="btn-tool active" id="btn-line-numbers" title="Toggle Line Numbers">
                                 <i class="bi bi-list-ol"></i>
                             </button>
+                            <button class="btn-tool" id="btn-line-wrap" title="Toggle Line Wrap">
+                                <i class="bi bi-text-wrap"></i>
+                            </button>
+                            <div class="editor-mode-toggle">
+                                <button class="btn-mode active" id="btn-mode-code">CODE</button>
+                                <button class="btn-mode" id="btn-mode-visual">VISUAL</button>
+                            </div>
                             <button class="btn-tool" id="btn-history" title="View Edit History">
                                 <i class="bi bi-clock-history"></i>
                             </button>
@@ -251,11 +258,41 @@
                         <!-- Split View: Source & PDF -->
                         <div class="source-view" id="source-view">
                             <div class="line-numbers" id="line-numbers"></div>
-                            <textarea id="code-editor" class="code-editor" placeholder="Select a file to edit..."
-                                disabled></textarea>
-                            <div class="latex-autocomplete" id="latex-autocomplete" role="listbox" aria-hidden="true">
-                                <div class="autocomplete-header" id="latex-autocomplete-header">LATEX COMMANDS</div>
-                                <div class="autocomplete-list" id="latex-autocomplete-list"></div>
+                            <div class="editor-surface">
+                                <textarea id="code-editor" class="code-editor" placeholder="Select a file to edit..."
+                                    disabled></textarea>
+                                <div class="visual-editor-wrapper" id="visual-editor-wrapper">
+                                    <div class="visual-toolbar" id="visual-toolbar">
+                                        <button class="btn-tool" data-action="bold" title="Bold">
+                                            <i class="bi bi-type-bold"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="italic" title="Italic">
+                                            <i class="bi bi-type-italic"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="underline" title="Underline">
+                                            <i class="bi bi-type-underline"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="section" title="Section">
+                                            <i class="bi bi-type-h2"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="subsection" title="Subsection">
+                                            <i class="bi bi-type-h3"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="itemize" title="Bulleted List">
+                                            <i class="bi bi-list-ul"></i>
+                                        </button>
+                                        <button class="btn-tool" data-action="enumerate" title="Numbered List">
+                                            <i class="bi bi-list-ol"></i>
+                                        </button>
+                                    </div>
+                                    <div id="visual-editor" class="visual-editor" contenteditable="true"
+                                        data-placeholder="Write in visual mode..." spellcheck="false"></div>
+                                </div>
+                                <div class="latex-autocomplete" id="latex-autocomplete" role="listbox"
+                                    aria-hidden="true">
+                                    <div class="autocomplete-header" id="latex-autocomplete-header">LATEX COMMANDS</div>
+                                    <div class="autocomplete-list" id="latex-autocomplete-list"></div>
+                                </div>
                             </div>
                         </div>
                         <!-- Resizable Divider -->

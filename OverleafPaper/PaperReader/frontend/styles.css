@@ -2055,6 +2055,14 @@ body {
     overflow: hidden;
 }
 
+.editor-surface {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    min-width: 0;
+}
+
 /* Line Numbers */
 .line-numbers {
     width: 50px;
@@ -2136,6 +2144,102 @@ body {
     white-space: pre;
     overflow: auto;
     tab-size: 4;
+}
+
+.code-editor.wrap {
+    white-space: pre-wrap;
+    word-break: break-word;
+    overflow-x: hidden;
+}
+
+.visual-editor-wrapper {
+    display: none;
+    flex: 1;
+    flex-direction: column;
+    height: 100%;
+}
+
+.visual-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid rgba(0, 255, 255, 0.15);
+    background: rgba(8, 12, 20, 0.9);
+}
+
+.visual-editor {
+    flex: 1;
+    padding: 18px;
+    color: #dce6f0;
+    font-family: 'VT323', monospace;
+    font-size: 1rem;
+    line-height: 1.6;
+    overflow: auto;
+    outline: none;
+    white-space: pre-wrap;
+}
+
+.visual-editor.disabled {
+    opacity: 0.5;
+    pointer-events: none;
+}
+
+.visual-editor:empty:before {
+    content: attr(data-placeholder);
+    color: rgba(160, 170, 190, 0.7);
+}
+
+.visual-editor h2,
+.visual-editor h3,
+.visual-editor h4,
+.visual-editor h5 {
+    margin: 12px 0 8px;
+    color: #f4fdff;
+}
+
+.visual-editor p {
+    margin: 0 0 12px;
+}
+
+.visual-editor ul,
+.visual-editor ol {
+    margin: 0 0 12px 20px;
+    padding: 0;
+}
+
+.source-view.visual-mode .code-editor,
+.source-view.visual-mode .line-numbers {
+    display: none;
+}
+
+.source-view.visual-mode .visual-editor-wrapper {
+    display: flex;
+}
+
+.editor-mode-toggle {
+    display: inline-flex;
+    background: rgba(10, 16, 24, 0.6);
+    border: 1px solid rgba(0, 255, 255, 0.2);
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.btn-mode {
+    border: none;
+    background: transparent;
+    color: rgba(140, 220, 230, 0.8);
+    padding: 4px 10px;
+    font-size: 0.65rem;
+    letter-spacing: 0.2em;
+    cursor: pointer;
+    font-family: 'Press Start 2P', cursive;
+}
+
+.btn-mode.active {
+    background: rgba(0, 255, 255, 0.2);
+    color: #f4fdff;
+    box-shadow: 0 0 10px rgba(0, 255, 255, 0.25);
 }
 
 .code-editor::-webkit-scrollbar {
@@ -4725,6 +4829,21 @@ body {
     .code-editor {
         font-size: 12px;
         padding: 12px 10px;
+    }
+
+    .visual-toolbar {
+        flex-wrap: wrap;
+        gap: 6px;
+        padding: 8px 10px;
+    }
+
+    .visual-editor {
+        font-size: 0.95rem;
+        padding: 14px;
+    }
+
+    .editor-mode-toggle {
+        transform: scale(0.95);
     }
 
     .copilot-settings {
