@@ -5302,16 +5302,35 @@ const CopilotController = {
         document.getElementById('context-clear')?.addEventListener('click', () => this.clearContext());
     },
 
+    normalizeLlmBase(base) {
+        if (!base) return base;
+        const trimmed = base.trim().replace(/\/+$/, '');
+        if (trimmed.includes('/api/llm')) {
+            return trimmed;
+        }
+        if (trimmed.endsWith('/llm')) {
+            return `${trimmed}/v1`;
+        }
+        if (trimmed.endsWith('/llm/v1') || trimmed.endsWith('/v1')) {
+            return trimmed;
+        }
+        return trimmed;
+    },
+
     loadLlmSettings() {
         const defaultBase = isLocalDev
             ? 'http://127.0.0.1:22222/llm/v1'
             : 'https://game.agaii.org/llm/v1';
-        const base = localStorage.getItem('paperreader_llm_base') || defaultBase;
+        const storedBase = localStorage.getItem('paperreader_llm_base') || defaultBase;
+        const base = this.normalizeLlmBase(storedBase);
         const model = localStorage.getItem('paperreader_llm_model') || '';
         this.llmBase = base;
         this.llmModel = model;
         if (this.elements.apiBaseInput) {
             this.elements.apiBaseInput.value = base;
+        }
+        if (storedBase !== base) {
+            this.saveLlmSettings();
         }
     },
 
@@ -5331,7 +5350,11 @@ const CopilotController = {
     handleApiBaseChange() {
         const value = this.elements.apiBaseInput?.value?.trim();
         if (!value) return;
-        this.llmBase = value.replace(/\/+$/, '');
+        const normalized = this.normalizeLlmBase(value);
+        this.llmBase = normalized;
+        if (this.elements.apiBaseInput) {
+            this.elements.apiBaseInput.value = normalized;
+        }
         this.saveLlmSettings();
         this.refreshModels(true);
     },
@@ -5344,7 +5367,7 @@ const CopilotController = {
     },
 
     resolveLlmEndpoint(base, type) {
-        const normalized = base.replace(/\/+$/, '');
+        const normalized = this.normalizeLlmBase(base);
         if (normalized.includes('/api/llm')) {
             return `${normalized}/${type}`;
         }
@@ -5361,8 +5384,11 @@ const CopilotController = {
             const response = await fetch(url, { method: 'GET' });
             if (!response.ok) throw new Error(`Model fetch failed: ${response.status}`);
             const data = await response.json();
-            const models = (data.data || data.models || [])
-                .map((item) => item.id || item.model || item.name)
+            const rawModels = Array.isArray(data)
+                ? data
+                : (data.data || data.models || []);
+            const models = rawModels
+                .map((item) => item.id || item.model || item.name || item)
                 .filter(Boolean);
             this.availableModels = Array.from(new Set(models));
             this.renderModelOptions();
