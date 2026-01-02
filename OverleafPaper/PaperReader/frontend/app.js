@@ -1587,6 +1587,7 @@ const EditorController = {
         wrapEnabled: true,
         visualSyncTimer: null,
         visualSyncLock: false,
+        highlightTimer: null,
         autocomplete: {
             visible: false,
             mode: null,
@@ -1615,6 +1616,8 @@ const EditorController = {
         btnModeCode: document.getElementById('btn-mode-code'),
         btnModeVisual: document.getElementById('btn-mode-visual'),
         btnLineWrap: document.getElementById('btn-line-wrap'),
+        codeHighlight: document.getElementById('code-highlight'),
+        codeHighlightContent: document.getElementById('code-highlight-content'),
         latexAutocomplete: document.getElementById('latex-autocomplete'),
         latexAutocompleteHeader: document.getElementById('latex-autocomplete-header'),
         latexAutocompleteList: document.getElementById('latex-autocomplete-list'),
@@ -1891,6 +1894,16 @@ const EditorController = {
         this.elements.btnFindTex?.addEventListener('click', () => this.toggleFindBar());
         this.elements.findClose?.addEventListener('click', () => this.closeFindBar());
         this.elements.findInput?.addEventListener('input', () => this.performFind());
+        this.elements.findInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    this.findPrev();
+                } else {
+                    this.findNext();
+                }
+            }
+        });
         this.elements.findNext?.addEventListener('click', () => this.findNext());
         this.elements.findPrev?.addEventListener('click', () => this.findPrev());
 
@@ -1977,6 +1990,7 @@ const EditorController = {
         // Update line numbers on editor scroll/input
         this.elements.codeEditor?.addEventListener('scroll', () => {
             this.syncLineNumberScroll();
+            this.syncHighlightScroll();
             this.positionLatexAutocomplete();
         });
         this.elements.codeEditor?.addEventListener('input', () => this.handleEditorInput());
@@ -2297,6 +2311,9 @@ const EditorController = {
             this.elements.codeEditor.value = '';
             this.elements.codeEditor.disabled = true;
         }
+        if (this.elements.codeHighlightContent) {
+            this.elements.codeHighlightContent.innerHTML = '';
+        }
         if (this.elements.visualEditor) {
             this.elements.visualEditor.innerHTML = '';
             this.setVisualEditorEnabled(false);
@@ -2445,6 +2462,7 @@ const EditorController = {
                 this.updateEditorStats();
                 this.buildOutlineFromContent(content);
                 this.renderComments();
+                this.updateCodeHighlight();
                 if (this.state.editorMode === 'visual') {
                     this.syncCodeToVisual();
                 }
@@ -2470,6 +2488,7 @@ const EditorController = {
             this.updateEditorStats();
             this.buildOutlineFromContent(data.content);
             this.renderComments();
+            this.updateCodeHighlight();
             if (this.state.editorMode === 'visual') {
                 this.syncCodeToVisual();
             }
@@ -2489,6 +2508,7 @@ const EditorController = {
         this.scheduleOutlineUpdate();
         this.scheduleAutoSave();
         this.updateLatexAutocomplete();
+        this.scheduleHighlightUpdate();
     },
 
     updateDirtyState() {
@@ -4196,8 +4216,15 @@ const EditorController = {
         // Double click on text layer to go to source
         pageDiv.addEventListener('dblclick', (e) => {
             const rect = pageDiv.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
+            const textSpan = e.target.closest('.textLayer span');
+            let x = e.clientX - rect.left;
+            let y = e.clientY - rect.top;
+
+            if (textSpan) {
+                const spanRect = textSpan.getBoundingClientRect();
+                x = spanRect.left + spanRect.width / 2 - rect.left;
+                y = spanRect.top + spanRect.height / 2 - rect.top;
+            }
 
             // Convert viewport coordinates back to PDF points (unscaled)
             // viewport.convertToPdfPoint(x, y) returns [pdfX, pdfY]
@@ -4305,8 +4332,10 @@ const EditorController = {
         editor.setSelectionRange(pos, lineEnd);
 
         // Scroll to line
-        const lineHeight = 20; // approximate
-        editor.scrollTop = (lineNum - 10) * lineHeight;
+        const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
+        const targetTop = (lineNum - 1) * lineHeight;
+        const offset = Math.max(0, targetTop - editor.clientHeight / 2);
+        editor.scrollTop = offset;
 
         this.updateLineNumbers();
         this.updateCurrentLine();
@@ -4388,15 +4417,15 @@ const EditorController = {
         this.state.currentFindIndex = matches.length > 0 ? 0 : -1;
         this.elements.findCount.textContent = `${matches.length} result${matches.length !== 1 ? 's' : ''}`;
 
-        if (matches.length > 0) {
-            this.highlightCurrentMatch();
+        if (matches.length > 0 && document.activeElement !== this.elements.findInput) {
+            this.highlightCurrentMatch(true);
         }
     },
 
     findNext() {
         if (this.state.findMatches.length === 0) return;
         this.state.currentFindIndex = (this.state.currentFindIndex + 1) % this.state.findMatches.length;
-        this.highlightCurrentMatch();
+        this.highlightCurrentMatch(true);
     },
 
     findPrev() {
@@ -4404,16 +4433,18 @@ const EditorController = {
         this.state.currentFindIndex = this.state.currentFindIndex <= 0
             ? this.state.findMatches.length - 1
             : this.state.currentFindIndex - 1;
-        this.highlightCurrentMatch();
+        this.highlightCurrentMatch(true);
     },
 
-    highlightCurrentMatch() {
+    highlightCurrentMatch(forceFocus = false) {
         const editor = this.elements.codeEditor;
         const query = this.elements.findInput?.value || '';
         if (!editor || this.state.currentFindIndex < 0) return;
 
         const pos = this.state.findMatches[this.state.currentFindIndex];
-        editor.focus();
+        if (forceFocus) {
+            editor.focus();
+        }
         editor.setSelectionRange(pos, pos + query.length);
 
         // Scroll to selection
@@ -4623,6 +4654,7 @@ const EditorController = {
         const editor = this.elements.codeEditor;
         if (!editor) return;
         editor.classList.toggle('wrap', this.state.wrapEnabled);
+        this.elements.codeHighlight?.classList.toggle('wrap', this.state.wrapEnabled);
         this.elements.btnLineWrap?.classList.toggle('active', this.state.wrapEnabled);
     },
 
@@ -4898,6 +4930,117 @@ const EditorController = {
     },
 
     // ==========================================
+    // CODE HIGHLIGHTING
+    // ==========================================
+
+    scheduleHighlightUpdate() {
+        if (this.state.highlightTimer) {
+            clearTimeout(this.state.highlightTimer);
+        }
+        this.state.highlightTimer = setTimeout(() => {
+            this.updateCodeHighlight();
+        }, 60);
+    },
+
+    updateCodeHighlight() {
+        const editor = this.elements.codeEditor;
+        const highlight = this.elements.codeHighlightContent;
+        if (!editor || !highlight) return;
+        const text = editor.value || '';
+        const html = this.highlightLatex(text);
+        highlight.innerHTML = html || '&nbsp;';
+        this.syncHighlightScroll();
+    },
+
+    syncHighlightScroll() {
+        const editor = this.elements.codeEditor;
+        const highlight = this.elements.codeHighlight;
+        if (!editor || !highlight) return;
+        highlight.scrollTop = editor.scrollTop;
+        highlight.scrollLeft = editor.scrollLeft;
+    },
+
+    highlightLatex(text) {
+        const lines = (text || '').split('\n');
+        return lines.map((line) => {
+            const { code, comment } = this.splitLatexComment(line);
+            const highlighted = this.highlightLatexCode(code);
+            if (comment === null) {
+                return highlighted;
+            }
+            return `${highlighted}<span class="token-comment">${this.escapeHtml(comment)}</span>`;
+        }).join('\n');
+    },
+
+    splitLatexComment(line) {
+        for (let i = 0; i < line.length; i += 1) {
+            if (line[i] === '%' && (i === 0 || line[i - 1] !== '\\')) {
+                return { code: line.slice(0, i), comment: line.slice(i) };
+            }
+        }
+        return { code: line, comment: null };
+    },
+
+    highlightLatexCode(code) {
+        let output = '';
+        let i = 0;
+        while (i < code.length) {
+            const ch = code[i];
+            if (ch === '\\') {
+                let j = i + 1;
+                while (j < code.length && /[A-Za-z@*]/.test(code[j])) j += 1;
+                const cmd = code.slice(i, j);
+                output += `<span class="token-command">${this.escapeHtml(cmd)}</span>`;
+                i = j;
+
+                if ((cmd === '\\begin' || cmd === '\\end') && code[i] === '{') {
+                    let k = i + 1;
+                    while (k < code.length && code[k] !== '}') k += 1;
+                    const env = code.slice(i + 1, k);
+                    output += `<span class="token-brace">{</span><span class="token-env">${this.escapeHtml(env)}</span>`;
+                    if (k < code.length && code[k] === '}') {
+                        output += `<span class="token-brace">}</span>`;
+                        i = k + 1;
+                    }
+                }
+                continue;
+            }
+            if (ch === '{' || ch === '}') {
+                output += `<span class="token-brace">${this.escapeHtml(ch)}</span>`;
+                i += 1;
+                continue;
+            }
+            if (ch === '$') {
+                let j = i + 1;
+                while (j < code.length) {
+                    if (code[j] === '$' && code[j - 1] !== '\\') break;
+                    j += 1;
+                }
+                const math = code.slice(i, Math.min(j + 1, code.length));
+                output += `<span class="token-math">${this.escapeHtml(math)}</span>`;
+                i = j + 1;
+                continue;
+            }
+            if (ch === '&') {
+                output += `<span class="token-operator">&amp;</span>`;
+                i += 1;
+                continue;
+            }
+            if (/\d/.test(ch)) {
+                let j = i + 1;
+                while (j < code.length && /[\d\.]/.test(code[j])) j += 1;
+                const num = code.slice(i, j);
+                output += `<span class="token-number">${this.escapeHtml(num)}</span>`;
+                i = j;
+                continue;
+            }
+            output += this.escapeHtml(ch);
+            i += 1;
+        }
+        return output;
+    },
+
+    // ==========================================
     // LINE NUMBERS FUNCTIONALITY
     // ==========================================
 
@@ -5078,7 +5221,7 @@ const EditorController = {
             return;
         }
 
-        const line = this.getCurrentLine();
+        const { line, column } = this.getCursorPosition();
         const pdfName = this.state.lastCompiledPdfUrl?.split('/').pop();
 
         if (!pdfName) {
@@ -5093,6 +5236,7 @@ const EditorController = {
                 body: JSON.stringify({
                     tex_file: this.state.currentFile,
                     line: line,
+                    column: column,
                     pdf_file: pdfName
                 })
             });
@@ -5110,10 +5254,19 @@ const EditorController = {
         }
     },
 
-    getCurrentLine() {
+    getCursorPosition() {
         const editor = this.elements.codeEditor;
-        const textBeforeCursor = editor.value.substring(0, editor.selectionStart);
-        return textBeforeCursor.split('\n').length;
+        if (!editor) return { line: 1, column: 1 };
+        const pos = editor.selectionStart || 0;
+        const textBeforeCursor = editor.value.substring(0, pos);
+        const line = textBeforeCursor.split('\n').length;
+        const lastNewline = textBeforeCursor.lastIndexOf('\n');
+        const column = pos - lastNewline;
+        return { line, column };
+    },
+
+    getCurrentLine() {
+        return this.getCursorPosition().line;
     },
 
     scrollToPdfLocation(page, x, y) {
@@ -5125,9 +5278,17 @@ const EditorController = {
 
         // Add a temporary highlight at the location
         const marker = document.createElement('div');
+        const scale = this.state.pdfScale || 1;
+        const pageHeight = pageEl.clientHeight || 0;
+        let markerX = x * scale;
+        let markerY = y * scale;
+        if (markerY > pageHeight || markerY < 0) {
+            markerY = pageHeight - (y * scale);
+        }
+
         marker.style.position = 'absolute';
-        marker.style.left = `${x * this.state.pdfScale}px`; // Scale coordinates by current zoom
-        marker.style.top = `${y * this.state.pdfScale}px`;
+        marker.style.left = `${markerX}px`;
+        marker.style.top = `${markerY}px`;
         marker.style.width = '100px';
         marker.style.height = '20px';
         marker.style.background = 'rgba(0, 255, 255, 0.4)';

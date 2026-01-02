@@ -2132,7 +2132,7 @@ body {
 .code-editor {
     flex: 1;
     background: transparent;
-    color: #dce6f0;
+    color: transparent;
     border: none;
     padding: 20px;
     padding-left: 15px;
@@ -2144,12 +2144,65 @@ body {
     white-space: pre;
     overflow: auto;
     tab-size: 4;
+    caret-color: #dce6f0;
 }
 
 .code-editor.wrap {
     white-space: pre-wrap;
     word-break: break-word;
     overflow-x: hidden;
+}
+
+.code-highlight {
+    position: absolute;
+    inset: 0;
+    padding: 20px;
+    padding-left: 15px;
+    margin: 0;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #dce6f0;
+    white-space: pre;
+    overflow: hidden;
+    pointer-events: none;
+}
+
+.code-highlight.wrap {
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.code-highlight code {
+    display: block;
+}
+
+.token-command {
+    color: #6fb4ff;
+}
+
+.token-comment {
+    color: #6fe28a;
+}
+
+.token-brace {
+    color: #f1c873;
+}
+
+.token-env {
+    color: #ffb36f;
+}
+
+.token-math {
+    color: #ff86d3;
+}
+
+.token-operator {
+    color: #8ce3ff;
+}
+
+.token-number {
+    color: #f2a65a;
 }
 
 .visual-editor-wrapper {
@@ -2210,6 +2263,10 @@ body {
 
 .source-view.visual-mode .code-editor,
 .source-view.visual-mode .line-numbers {
+    display: none;
+}
+
+.source-view.visual-mode .code-highlight {
     display: none;
 }
 
@@ -4867,6 +4924,11 @@ body {
     }
 
     .code-editor {
+        font-size: 12px;
+        padding: 12px 10px;
+    }
+
+    .code-highlight {
         font-size: 12px;
         padding: 12px 10px;
     }

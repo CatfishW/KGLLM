@@ -413,6 +413,7 @@ async def synctex_to_source(request: SyncTexRequest, project_id: Optional[str] =
 class ForwardSyncRequest(BaseModel):
     tex_file: str
     line: int
+    column: Optional[int] = None
     pdf_file: str
 
 @app.post("/api/synctex/forward")
@@ -425,9 +426,10 @@ async def synctex_to_pdf(request: ForwardSyncRequest, project_id: Optional[str] 
     import re
     
     # Command: synctex view -i "LINE:COL:TEX_FILE" -o "PDF_FILE"
+    column = request.column or 1
     cmd = [
         "synctex", "view",
-        "-i", f"{request.line}:0:{request.tex_file}",
+        "-i", f"{request.line}:{column}:{request.tex_file}",
         "-o", f"{request.pdf_file}"
     ]
     
