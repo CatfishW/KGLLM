@@ -2938,6 +2938,46 @@ body {
     word-break: break-word;
 }
 
+.history-preview-content.diff-view {
+    padding: 8px;
+}
+
+.diff-line {
+    display: flex;
+    gap: 8px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    align-items: flex-start;
+    font-size: 0.78rem;
+}
+
+.diff-prefix {
+    width: 12px;
+    text-align: center;
+    font-weight: bold;
+    flex-shrink: 0;
+    color: rgba(200, 220, 235, 0.7);
+}
+
+.diff-text {
+    flex: 1;
+    word-break: break-word;
+}
+
+.diff-add {
+    background: rgba(0, 255, 153, 0.12);
+    color: #d9ffe9;
+}
+
+.diff-del {
+    background: rgba(255, 80, 80, 0.14);
+    color: #ffd4d4;
+}
+
+.diff-eq {
+    color: rgba(200, 210, 220, 0.75);
+}
+
 .history-item {
     display: flex;
     align-items: flex-start;

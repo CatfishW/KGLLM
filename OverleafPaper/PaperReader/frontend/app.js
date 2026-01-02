@@ -3380,6 +3380,7 @@ const EditorController = {
             list.innerHTML = '<div class="outline-empty">Select a file</div>';
             previewTitle.textContent = 'Select a version to preview';
             previewContent.textContent = '';
+            previewContent.classList.remove('diff-view');
             if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = true;
             if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = true;
             return;
@@ -3395,6 +3396,7 @@ const EditorController = {
             list.innerHTML = '<div class="outline-empty">No versions yet</div>';
             previewTitle.textContent = 'Select a version to preview';
             previewContent.textContent = '';
+            previewContent.classList.remove('diff-view');
             if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = true;
             if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = true;
             return;
@@ -3427,6 +3429,7 @@ const EditorController = {
         if (!hasSelection) {
             previewTitle.textContent = 'Select a version to preview';
             previewContent.textContent = '';
+            previewContent.classList.remove('diff-view');
         }
         if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = !hasSelection;
         if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = !hasSelection;
@@ -3439,14 +3442,109 @@ const EditorController = {
         this.state.selectedVersionId = id;
         if (this.elements.historyPreviewTitle) {
             const date = new Date(entry.timestamp);
-            this.elements.historyPreviewTitle.textContent = `${entry.filename} - ${date.toLocaleString()}`;
+            this.elements.historyPreviewTitle.textContent = `${entry.filename} - ${date.toLocaleString()} (diff vs current)`;
         }
         if (this.elements.historyPreviewContent) {
-            this.elements.historyPreviewContent.textContent = entry.content || '';
+            const currentContent = this.getDiffBaseContent(entry.filename);
+            const diffHtml = this.renderDiffPreview(entry.content || '', currentContent || '');
+            this.elements.historyPreviewContent.innerHTML = diffHtml;
+            this.elements.historyPreviewContent.classList.add('diff-view');
         }
         if (this.elements.historyRestoreVersion) this.elements.historyRestoreVersion.disabled = false;
         if (this.elements.historyCopyVersion) this.elements.historyCopyVersion.disabled = false;
         this.renderVersionHistory();
+    },
+
+    getDiffBaseContent(filename) {
+        if (this.state.currentFile === filename && this.elements.codeEditor) {
+            return this.elements.codeEditor.value || '';
+        }
+        if (this.state.fileContents[filename]) {
+            return this.state.fileContents[filename];
+        }
+        if (this.isLocalProject()) {
+            return ProjectManager.getLocalFileContent(filename) || '';
+        }
+        const latest = this.state.versionHistory.find(v => v.filename === filename);
+        return latest?.content || '';
+    },
+
+    renderDiffPreview(oldText, newText) {
+        const oldLines = (oldText || '').split('\n');
+        const newLines = (newText || '').split('\n');
+        const diff = this.computeLineDiff(oldLines, newLines);
+
+        return diff.map((item) => {
+            const safeLine = item.line === '' ? '&nbsp;' : this.escapeHtml(item.line);
+            const prefix = item.type === 'add' ? '+' : item.type === 'del' ? '-' : ' ';
+            const cls = item.type === 'add' ? 'diff-add' : item.type === 'del' ? 'diff-del' : 'diff-eq';
+            return `<div class="diff-line ${cls}"><span class="diff-prefix">${prefix}</span><span class="diff-text">${safeLine}</span></div>`;
+        }).join('');
+    },
+
+    computeLineDiff(oldLines, newLines) {
+        const n = oldLines.length;
+        const m = newLines.length;
+        const max = n + m;
+        const size = 2 * max + 1;
+        let v = new Array(size).fill(0);
+        const trace = [];
+
+        for (let d = 0; d <= max; d += 1) {
+            trace.push(v.slice());
+            for (let k = -d; k <= d; k += 2) {
+                const idx = k + max;
+                let x;
+                if (k === -d || (k !== d && v[idx - 1] < v[idx + 1])) {
+                    x = v[idx + 1];
+                } else {
+                    x = v[idx - 1] + 1;
+                }
+                let y = x - k;
+                while (x < n && y < m && oldLines[x] === newLines[y]) {
+                    x += 1;
+                    y += 1;
+                }
+                v[idx] = x;
+                if (x >= n && y >= m) {
+                    return this.backtrackDiff(trace, oldLines, newLines, max, x, y, d);
+                }
+            }
+        }
+        return [];
+    },
+
+    backtrackDiff(trace, oldLines, newLines, max, x, y, d) {
+        const diff = [];
+        for (let depth = d; depth >= 0; depth -= 1) {
+            const v = trace[depth];
+            const k = x - y;
+            const idx = k + max;
+            let prevK;
+            if (k === -depth || (k !== depth && v[idx - 1] < v[idx + 1])) {
+                prevK = k + 1;
+            } else {
+                prevK = k - 1;
+            }
+            const prevX = v[prevK + max];
+            const prevY = prevX - prevK;
+
+            while (x > prevX && y > prevY) {
+                diff.push({ type: 'eq', line: oldLines[x - 1] });
+                x -= 1;
+                y -= 1;
+            }
+            if (depth === 0) break;
+            if (x === prevX) {
+                diff.push({ type: 'add', line: newLines[y - 1] });
+                y -= 1;
+            } else {
+                diff.push({ type: 'del', line: oldLines[x - 1] });
+                x -= 1;
+            }
+        }
+        diff.reverse();
+        return diff;
     },
 
     restoreSelectedVersion() {
