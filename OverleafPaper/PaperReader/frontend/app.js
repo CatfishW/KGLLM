@@ -5179,6 +5179,10 @@ const CopilotController = {
     conversationHistory: [],
     pendingImage: null,
     lastDragDistance: 0,
+    settingsOpen: false,
+    availableModels: [],
+    llmBase: null,
+    llmModel: null,
 
     elements: {
         fab: null,
@@ -5192,6 +5196,11 @@ const CopilotController = {
         imageInput: null,
         closeBtn: null,
         clearBtn: null,
+        settingsBtn: null,
+        settingsPanel: null,
+        apiBaseInput: null,
+        modelSelect: null,
+        modelRefresh: null,
         contextBlock: null,
         contextCode: null,
         contextLabel: null,
@@ -5210,6 +5219,11 @@ const CopilotController = {
         this.elements.imageInput = document.getElementById('copilot-image-input');
         this.elements.closeBtn = document.getElementById('copilot-minimize');
         this.elements.clearBtn = document.getElementById('copilot-clear');
+        this.elements.settingsBtn = document.getElementById('copilot-settings');
+        this.elements.settingsPanel = document.getElementById('copilot-settings-panel');
+        this.elements.apiBaseInput = document.getElementById('copilot-api-base');
+        this.elements.modelSelect = document.getElementById('copilot-model-select');
+        this.elements.modelRefresh = document.getElementById('copilot-model-refresh');
         this.elements.contextBlock = document.getElementById('copilot-context');
         this.elements.contextCode = document.getElementById('context-code');
         this.elements.contextLabel = document.querySelector('#copilot-context .context-label span');
@@ -5229,6 +5243,8 @@ const CopilotController = {
         this.setupPanelGestures();
         this.setupSpeechRecognition();
         this.setupTextSelection();
+        this.loadLlmSettings();
+        this.refreshModels();
 
         window.addEventListener('resize', () => {
             if (this.isOpen) {
@@ -5249,6 +5265,9 @@ const CopilotController = {
         // Clear button
         this.elements.clearBtn?.addEventListener('click', () => this.clearChat());
 
+        // Settings button
+        this.elements.settingsBtn?.addEventListener('click', () => this.toggleSettings());
+
         // Send button
         this.elements.sendBtn?.addEventListener('click', () => this.sendMessage());
 
@@ -5262,6 +5281,10 @@ const CopilotController = {
 
         // Voice button
         this.elements.voiceBtn?.addEventListener('click', () => this.toggleVoice());
+
+        this.elements.apiBaseInput?.addEventListener('change', () => this.handleApiBaseChange());
+        this.elements.modelSelect?.addEventListener('change', () => this.handleModelChange());
+        this.elements.modelRefresh?.addEventListener('click', () => this.refreshModels(true));
 
         // Image button and input
         this.elements.imageBtn?.addEventListener('click', () => {
@@ -5277,6 +5300,105 @@ const CopilotController = {
 
         // Clear selected context
         document.getElementById('context-clear')?.addEventListener('click', () => this.clearContext());
+    },
+
+    loadLlmSettings() {
+        const defaultBase = isLocalDev
+            ? 'http://127.0.0.1:22222/api/llm'
+            : `${window.location.protocol}//${window.location.hostname}/api/llm`;
+        const base = localStorage.getItem('paperreader_llm_base') || defaultBase;
+        const model = localStorage.getItem('paperreader_llm_model') || '';
+        this.llmBase = base;
+        this.llmModel = model;
+        if (this.elements.apiBaseInput) {
+            this.elements.apiBaseInput.value = base;
+        }
+    },
+
+    saveLlmSettings() {
+        if (this.llmBase) localStorage.setItem('paperreader_llm_base', this.llmBase);
+        if (this.llmModel) localStorage.setItem('paperreader_llm_model', this.llmModel);
+    },
+
+    toggleSettings() {
+        this.settingsOpen = !this.settingsOpen;
+        if (this.elements.settingsPanel) {
+            this.elements.settingsPanel.classList.toggle('visible', this.settingsOpen);
+            this.elements.settingsPanel.setAttribute('aria-hidden', this.settingsOpen ? 'false' : 'true');
+        }
+    },
+
+    handleApiBaseChange() {
+        const value = this.elements.apiBaseInput?.value?.trim();
+        if (!value) return;
+        this.llmBase = value.replace(/\/+$/, '');
+        this.saveLlmSettings();
+        this.refreshModels(true);
+    },
+
+    handleModelChange() {
+        const value = this.elements.modelSelect?.value;
+        if (!value) return;
+        this.llmModel = value;
+        this.saveLlmSettings();
+    },
+
+    resolveLlmEndpoint(base, type) {
+        const normalized = base.replace(/\/+$/, '');
+        if (normalized.includes('/api/llm')) {
+            return `${normalized}/${type}`;
+        }
+        if (type === 'chat') return `${normalized}/chat/completions`;
+        return `${normalized}/models`;
+    },
+
+    async refreshModels(force = false) {
+        if (!this.llmBase) return;
+        if (!force && this.availableModels.length) return;
+
+        const url = this.resolveLlmEndpoint(this.llmBase, 'models');
+        try {
+            const response = await fetch(url, { method: 'GET' });
+            if (!response.ok) throw new Error(`Model fetch failed: ${response.status}`);
+            const data = await response.json();
+            const models = (data.data || data.models || [])
+                .map((item) => item.id || item.model || item.name)
+                .filter(Boolean);
+            this.availableModels = Array.from(new Set(models));
+            this.renderModelOptions();
+        } catch (e) {
+            console.warn('Failed to load models', e);
+            if (!this.availableModels.length) {
+                this.availableModels = ['gpt-4o-mini'];
+                this.renderModelOptions();
+            }
+        }
+    },
+
+    renderModelOptions() {
+        const select = this.elements.modelSelect;
+        if (!select) return;
+
+        select.innerHTML = '';
+        if (!this.availableModels.length) {
+            select.innerHTML = '<option value="">No models</option>';
+            return;
+        }
+
+        this.availableModels.forEach((model) => {
+            const option = document.createElement('option');
+            option.value = model;
+            option.textContent = model;
+            select.appendChild(option);
+        });
+
+        if (this.llmModel && this.availableModels.includes(this.llmModel)) {
+            select.value = this.llmModel;
+        } else {
+            this.llmModel = this.availableModels[0];
+            select.value = this.llmModel;
+            this.saveLlmSettings();
+        }
     },
 
     setupBackdrop() {
@@ -5837,12 +5959,15 @@ const CopilotController = {
     },
 
     async callMLLMStream(messages, image = null, onChunk) {
-        const apiUrl = isLocalDev
-            ? 'http://127.0.0.1:22222/api/llm/chat'
-            : `${window.location.protocol}//${window.location.hostname}/api/llm/chat`;
+        if (!this.llmBase) {
+            this.loadLlmSettings();
+        }
+
+        const apiUrl = this.resolveLlmEndpoint(this.llmBase, 'chat');
+        const model = this.llmModel || 'gpt-4o-mini';
 
         const requestBody = {
-            model: 'gpt-4o-mini',
+            model: model,
             messages: messages,
             max_tokens: 2048,
             temperature: 0.7,

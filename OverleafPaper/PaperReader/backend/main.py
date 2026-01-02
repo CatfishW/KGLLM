@@ -519,6 +519,21 @@ async def proxy_llm_chat(request: Request):
     except httpx.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"LLM proxy error: {exc}") from exc
 
+
+@app.get("/api/llm/models")
+async def proxy_llm_models(request: Request):
+    headers = build_llm_headers(request)
+    url = "https://game.agaii.org/llm/v1/models"
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.get(url, headers=headers)
+            if resp.status_code >= 400:
+                raise HTTPException(status_code=resp.status_code, detail=resp.text)
+            return JSONResponse(resp.json())
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail=f"LLM proxy error: {exc}") from exc
+
 @app.get("/api/project/content/{filename}")
 async def get_project_file_content(filename: str, project_id: Optional[str] = Query(None, description="Project ID")):
     """Read text content of a file."""

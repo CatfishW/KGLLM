@@ -582,10 +582,25 @@
                 <button class="copilot-btn" id="copilot-clear" title="Clear chat">
                     <i class="bi bi-trash"></i>
                 </button>
+                <button class="copilot-btn" id="copilot-settings" title="Copilot settings">
+                    <i class="bi bi-sliders2-vertical"></i>
+                </button>
                 <button class="copilot-btn" id="copilot-minimize" title="Minimize">
                     <i class="bi bi-dash-lg"></i>
                 </button>
             </div>
+        </div>
+        <div class="copilot-settings" id="copilot-settings-panel" aria-hidden="true">
+            <label class="copilot-settings-label" for="copilot-api-base">API Base URL</label>
+            <input type="text" id="copilot-api-base" class="copilot-settings-input" placeholder="https://game.agaii.org/llm/v1">
+            <div class="copilot-settings-row">
+                <label class="copilot-settings-label" for="copilot-model-select">Model</label>
+                <button class="copilot-settings-refresh" id="copilot-model-refresh" title="Refresh models">
+                    <i class="bi bi-arrow-repeat"></i>
+                </button>
+            </div>
+            <select id="copilot-model-select" class="copilot-settings-select"></select>
+            <div class="copilot-settings-hint">Auto-detects models from the API base.</div>
         </div>
         <div class="copilot-context" id="copilot-context" style="display: none;">
             <div class="context-label">
