@@ -30,6 +30,42 @@
     --editor-source-bg: linear-gradient(180deg, #0f1118 0%, #121622 100%);
     --panel-bg: #0f1114;
     --panel-border: #333;
+    --panel-gradient-top: #1b1f29;
+    --panel-gradient-bottom: #131722;
+    --panel-soft-bg: rgba(10, 15, 25, 0.85);
+    --panel-soft-bg-2: rgba(5, 8, 16, 0.85);
+    --panel-input-bg: rgba(5, 8, 12, 0.6);
+    --panel-input-border: rgba(0, 255, 255, 0.2);
+    --panel-input-text: #dcdcdc;
+    --panel-input-placeholder: #6c737c;
+    --panel-title-bg: linear-gradient(90deg, rgba(0, 255, 255, 0.12), rgba(44, 48, 53, 0.8));
+    --panel-toolbar-bg: linear-gradient(90deg, rgba(8, 12, 20, 0.95), rgba(26, 32, 45, 0.95));
+    --panel-toolbar-border: rgba(0, 255, 255, 0.2);
+    --panel-tab-bg: rgba(0, 255, 255, 0.06);
+    --panel-tab-border: rgba(0, 255, 255, 0.2);
+    --panel-tab-text: #b9c6d3;
+    --panel-tab-active-bg: linear-gradient(135deg, rgba(0, 255, 255, 0.6), rgba(0, 191, 255, 0.8));
+    --panel-tab-active-text: #001219;
+    --panel-tab-active-border: var(--neon-cyan);
+    --panel-button-bg: rgba(8, 12, 20, 0.4);
+    --panel-button-text: #c9d3dd;
+    --panel-button-border: rgba(0, 255, 255, 0.12);
+    --panel-button-hover-bg: rgba(0, 255, 255, 0.12);
+    --panel-button-hover-border: rgba(0, 255, 255, 0.4);
+    --panel-button-active-bg: #2a2f35;
+    --panel-button-focus: rgba(0, 255, 255, 0.3);
+    --panel-chip-bg: rgba(0, 255, 255, 0.08);
+    --panel-chip-border: rgba(0, 255, 255, 0.2);
+    --panel-chip-text: #b9c6d3;
+    --line-number-bg: rgba(5, 8, 14, 0.8);
+    --line-number-border: rgba(0, 255, 255, 0.15);
+    --line-number-text: #6a7a8f;
+    --line-number-active-bg: rgba(0, 255, 255, 0.05);
+    --line-number-active-text: var(--neon-cyan);
+    --preview-bg: #525659;
+    --preview-toolbar-bg: linear-gradient(90deg, rgba(15, 20, 30, 0.95), rgba(35, 42, 55, 0.95));
+    --preview-toolbar-border: rgba(0, 255, 255, 0.18);
+    --editor-glow: rgba(0, 255, 255, 0.08);
 
     /* Code highlight colors */
     --code-fg: #dce6f0;
@@ -67,6 +103,42 @@
     --editor-source-bg: linear-gradient(180deg, #f9fbff 0%, #eff3fa 100%);
     --panel-bg: #ffffff;
     --panel-border: #d6dbe6;
+    --panel-gradient-top: #f4f7fc;
+    --panel-gradient-bottom: #e9eef5;
+    --panel-soft-bg: rgba(245, 248, 252, 0.95);
+    --panel-soft-bg-2: rgba(240, 244, 250, 0.95);
+    --panel-input-bg: #f1f4fa;
+    --panel-input-border: #d6dbe6;
+    --panel-input-text: #1f2433;
+    --panel-input-placeholder: #8a96aa;
+    --panel-title-bg: linear-gradient(90deg, rgba(0, 170, 210, 0.18), rgba(230, 236, 245, 0.95));
+    --panel-toolbar-bg: linear-gradient(90deg, #f3f6fb, #e8eef6);
+    --panel-toolbar-border: #d6dbe6;
+    --panel-tab-bg: rgba(0, 140, 200, 0.12);
+    --panel-tab-border: rgba(0, 140, 200, 0.25);
+    --panel-tab-text: #3a4a62;
+    --panel-tab-active-bg: linear-gradient(135deg, rgba(0, 170, 210, 0.55), rgba(0, 140, 200, 0.8));
+    --panel-tab-active-text: #f7fbff;
+    --panel-tab-active-border: rgba(0, 170, 210, 0.7);
+    --panel-button-bg: #f3f6fb;
+    --panel-button-text: #3a4a62;
+    --panel-button-border: #d6dbe6;
+    --panel-button-hover-bg: rgba(0, 140, 200, 0.12);
+    --panel-button-hover-border: rgba(0, 140, 200, 0.35);
+    --panel-button-active-bg: #e6ecf5;
+    --panel-button-focus: rgba(0, 140, 200, 0.35);
+    --panel-chip-bg: rgba(0, 140, 200, 0.12);
+    --panel-chip-border: rgba(0, 140, 200, 0.25);
+    --panel-chip-text: #3a4a62;
+    --line-number-bg: rgba(240, 244, 250, 0.95);
+    --line-number-border: #d6dbe6;
+    --line-number-text: #7c8aa1;
+    --line-number-active-bg: rgba(0, 140, 200, 0.12);
+    --line-number-active-text: #007a9a;
+    --preview-bg: #dfe5ee;
+    --preview-toolbar-bg: linear-gradient(90deg, #f1f4fa, #e6ecf5);
+    --preview-toolbar-border: #d6dbe6;
+    --editor-glow: rgba(0, 140, 200, 0.08);
     --code-fg: #1d2433;
     --code-ghost: rgba(29, 36, 51, 0.35);
     --code-command: #1f5bd8;
@@ -91,6 +163,42 @@
     --editor-source-bg: linear-gradient(180deg, #0b1320 0%, #141d2e 100%);
     --panel-bg: #0f1624;
     --panel-border: #223048;
+    --panel-gradient-top: #0f1724;
+    --panel-gradient-bottom: #0c1320;
+    --panel-soft-bg: rgba(12, 18, 30, 0.88);
+    --panel-soft-bg-2: rgba(8, 12, 20, 0.88);
+    --panel-input-bg: rgba(7, 12, 20, 0.75);
+    --panel-input-border: rgba(110, 160, 255, 0.2);
+    --panel-input-text: #dbe7ff;
+    --panel-input-placeholder: #6f83a6;
+    --panel-title-bg: linear-gradient(90deg, rgba(64, 160, 255, 0.16), rgba(20, 28, 40, 0.9));
+    --panel-toolbar-bg: linear-gradient(90deg, rgba(12, 18, 30, 0.95), rgba(20, 28, 45, 0.95));
+    --panel-toolbar-border: rgba(64, 160, 255, 0.2);
+    --panel-tab-bg: rgba(64, 160, 255, 0.1);
+    --panel-tab-border: rgba(64, 160, 255, 0.25);
+    --panel-tab-text: #b9c8e6;
+    --panel-tab-active-bg: linear-gradient(135deg, rgba(64, 160, 255, 0.6), rgba(0, 130, 220, 0.8));
+    --panel-tab-active-text: #07121f;
+    --panel-tab-active-border: rgba(90, 180, 255, 0.7);
+    --panel-button-bg: rgba(12, 18, 30, 0.55);
+    --panel-button-text: #cdd9f3;
+    --panel-button-border: rgba(64, 160, 255, 0.2);
+    --panel-button-hover-bg: rgba(64, 160, 255, 0.14);
+    --panel-button-hover-border: rgba(64, 160, 255, 0.4);
+    --panel-button-active-bg: rgba(16, 24, 38, 0.9);
+    --panel-button-focus: rgba(64, 160, 255, 0.35);
+    --panel-chip-bg: rgba(64, 160, 255, 0.12);
+    --panel-chip-border: rgba(64, 160, 255, 0.25);
+    --panel-chip-text: #cdd9f3;
+    --line-number-bg: rgba(8, 12, 20, 0.9);
+    --line-number-border: rgba(64, 160, 255, 0.2);
+    --line-number-text: #7b8bb0;
+    --line-number-active-bg: rgba(64, 160, 255, 0.16);
+    --line-number-active-text: #7bb1ff;
+    --preview-bg: #2f3745;
+    --preview-toolbar-bg: linear-gradient(90deg, rgba(12, 18, 30, 0.95), rgba(20, 28, 45, 0.95));
+    --preview-toolbar-border: rgba(64, 160, 255, 0.2);
+    --editor-glow: rgba(64, 160, 255, 0.08);
     --code-fg: #dbe7ff;
     --code-ghost: rgba(219, 231, 255, 0.25);
     --code-command: #7bb1ff;
@@ -1013,7 +1121,7 @@ body {
 
 .pdf-viewer-container {
     flex: 1;
-    background: #1a1a1a;
+    background: var(--preview-bg);
 }
 
 .pdf-viewer-container iframe {
@@ -1116,7 +1224,7 @@ body {
         width: 100%;
         max-height: 150px;
         border-right: none;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--panel-border);
     }
 
     .file-list {
@@ -1128,7 +1236,7 @@ body {
 
     .file-item {
         padding: 6px 12px;
-        background: #2f3439;
+        background: var(--panel-button-bg);
         border-radius: 4px;
         border-left: none !important;
         font-size: 0.8rem;
@@ -1142,7 +1250,7 @@ body {
         flex: 1;
         min-height: 200px;
         border-right: none;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--panel-border);
     }
 
     .preview-view {
@@ -1612,16 +1720,16 @@ body {
     display: none;
     gap: 5px;
     margin-left: 10px;
-    background: #1a1a1a;
+    background: var(--panel-soft-bg-2);
     padding: 2px;
     border-radius: 4px;
-    border: 1px solid #333;
+    border: 1px solid var(--panel-border);
 }
 
 .btn-mobile-tab {
     background: transparent;
     border: none;
-    color: #888;
+    color: var(--panel-tab-text);
     padding: 4px 10px;
     font-size: 0.7rem;
     font-family: var(--font-pixel);
@@ -1631,8 +1739,8 @@ body {
 }
 
 .btn-mobile-tab.active {
-    background: var(--neon-cyan);
-    color: #000;
+    background: var(--panel-tab-active-bg);
+    color: var(--panel-tab-active-text);
 }
 
 /* Editor Layout - Overleaf Style */
@@ -1640,7 +1748,7 @@ body {
     height: calc(100vh - 100px);
     display: flex;
     flex-direction: column;
-    background: radial-gradient(circle at top, rgba(0, 255, 255, 0.08), transparent 40%), #141721;
+    background: radial-gradient(circle at top, var(--editor-glow), transparent 40%), var(--bg-dark);
 }
 
 .editor-container {
@@ -1652,10 +1760,10 @@ body {
 
 .editor-sidebar {
     width: 240px;
-    border-right: 1px solid #333;
+    border-right: 1px solid var(--panel-border);
     display: flex;
     flex-direction: column;
-    background: linear-gradient(180deg, #1b1f29 0%, #131722 100%);
+    background: linear-gradient(180deg, var(--panel-gradient-top) 0%, var(--panel-gradient-bottom) 100%);
     transition: width 0.3s ease, min-width 0.3s ease, opacity 0.3s ease;
     overflow: hidden;
     box-shadow: inset -1px 0 0 rgba(0, 255, 255, 0.08);
@@ -1665,15 +1773,15 @@ body {
     display: flex;
     gap: 6px;
     padding: 8px;
-    background: rgba(5, 8, 16, 0.8);
-    border-bottom: 1px solid #333;
+    background: var(--panel-soft-bg-2);
+    border-bottom: 1px solid var(--panel-border);
 }
 
 .sidebar-tab {
     flex: 1;
-    background: rgba(0, 255, 255, 0.06);
-    border: 1px solid rgba(0, 255, 255, 0.2);
-    color: #b9c6d3;
+    background: var(--panel-tab-bg);
+    border: 1px solid var(--panel-tab-border);
+    color: var(--panel-tab-text);
     font-family: var(--font-retro);
     font-size: 0.8rem;
     padding: 8px 10px;
@@ -1685,14 +1793,14 @@ body {
 }
 
 .sidebar-tab:hover {
-    color: #fff;
+    color: var(--text-primary);
     border-color: var(--neon-cyan);
 }
 
 .sidebar-tab.active {
-    background: linear-gradient(135deg, rgba(0, 255, 255, 0.6), rgba(0, 191, 255, 0.8));
-    color: #001219;
-    border-color: var(--neon-cyan);
+    background: var(--panel-tab-active-bg);
+    color: var(--panel-tab-active-text);
+    border-color: var(--panel-tab-active-border);
     box-shadow: 0 0 12px rgba(0, 255, 255, 0.45);
 }
 
@@ -1710,8 +1818,8 @@ body {
     display: flex;
     gap: 6px;
     padding: 8px 10px;
-    border-bottom: 1px solid #333;
-    background: rgba(10, 15, 25, 0.8);
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-soft-bg);
     flex-wrap: wrap;
 }
 
@@ -1720,16 +1828,16 @@ body {
     align-items: center;
     gap: 8px;
     padding: 8px 10px;
-    border-bottom: 1px solid #333;
-    background: rgba(10, 15, 25, 0.8);
-    color: #9aa2aa;
+    border-bottom: 1px solid var(--panel-border);
+    background: var(--panel-soft-bg);
+    color: var(--text-secondary);
 }
 
 .file-search input {
     flex: 1;
-    background: rgba(5, 8, 12, 0.6);
-    border: 1px solid rgba(0, 255, 255, 0.2);
-    color: #dcdcdc;
+    background: var(--panel-input-bg);
+    border: 1px solid var(--panel-input-border);
+    color: var(--panel-input-text);
     font-family: var(--font-retro);
     font-size: 0.9rem;
     outline: none;
@@ -1738,7 +1846,7 @@ body {
 }
 
 .file-search input::placeholder {
-    color: #6c737c;
+    color: var(--panel-input-placeholder);
 }
 
 .btn-tool.btn-small {
@@ -1785,11 +1893,11 @@ body {
     padding: 12px 15px;
     font-size: 0.75rem;
     font-weight: bold;
-    color: #aeb5bd;
-    border-bottom: 1px solid #333;
+    color: var(--text-secondary);
+    border-bottom: 1px solid var(--panel-border);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    background: linear-gradient(90deg, rgba(0, 255, 255, 0.12), rgba(44, 48, 53, 0.8));
+    background: var(--panel-title-bg);
 }
 
 .file-list {
@@ -1811,7 +1919,7 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 6px;
-    color: #7c8792;
+    color: var(--text-secondary);
     font-size: 0.7rem;
 }
 
@@ -1830,7 +1938,7 @@ body {
 .outline-item {
     padding: 6px 14px;
     font-size: 0.85rem;
-    color: #cfe3f3;
+    color: var(--text-primary);
     cursor: pointer;
     border-left: 3px solid transparent;
     transition: all 0.15s ease;
@@ -1840,8 +1948,8 @@ body {
 }
 
 .outline-item:hover {
-    background: rgba(0, 255, 255, 0.08);
-    color: #fff;
+    background: var(--panel-button-hover-bg);
+    color: var(--text-primary);
     border-left-color: var(--neon-cyan);
 }
 
@@ -1863,34 +1971,34 @@ body {
 
 .outline-empty {
     padding: 20px;
-    color: #8a939c;
+    color: var(--text-secondary);
     font-size: 0.85rem;
     text-align: center;
 }
 
 .comment-compose {
     padding: 10px;
-    border-bottom: 1px solid #333;
+    border-bottom: 1px solid var(--panel-border);
     display: flex;
     flex-direction: column;
     gap: 8px;
-    background: rgba(10, 15, 25, 0.85);
+    background: var(--panel-soft-bg);
 }
 
 .comment-context {
     font-size: 0.75rem;
-    color: #b6c2cf;
-    background: rgba(0, 255, 255, 0.08);
-    border: 1px solid rgba(0, 255, 255, 0.2);
+    color: var(--panel-chip-text);
+    background: var(--panel-chip-bg);
+    border: 1px solid var(--panel-chip-border);
     border-radius: 4px;
     padding: 6px 8px;
     min-height: 28px;
 }
 
 #comment-input {
-    background: rgba(6, 10, 16, 0.85);
-    color: #dce6f0;
-    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: var(--panel-input-bg);
+    color: var(--panel-input-text);
+    border: 1px solid var(--panel-input-border);
     border-radius: 4px;
     padding: 8px;
     font-family: var(--font-retro);
@@ -1900,8 +2008,8 @@ body {
 }
 
 .comment-item {
-    border: 1px solid rgba(0, 255, 255, 0.2);
-    background: rgba(8, 12, 20, 0.8);
+    border: 1px solid var(--panel-chip-border);
+    background: var(--panel-soft-bg);
     border-radius: 6px;
     padding: 10px;
     margin: 0 10px 10px;
@@ -1916,14 +2024,14 @@ body {
 
 .comment-meta {
     font-size: 0.7rem;
-    color: #9aa2aa;
+    color: var(--text-secondary);
     display: flex;
     justify-content: space-between;
 }
 
 .comment-text {
     font-size: 0.9rem;
-    color: #e6e6e6;
+    color: var(--text-primary);
     line-height: 1.4;
     word-break: break-word;
     white-space: pre-wrap;
@@ -1938,7 +2046,7 @@ body {
 .file-item {
     padding: 6px 15px;
     font-size: 0.9rem;
-    color: #dcdcdc;
+    color: var(--text-primary);
     cursor: pointer;
     display: flex;
     align-items: center;
@@ -1951,13 +2059,13 @@ body {
 }
 
 .file-item:hover {
-    background: rgba(0, 255, 255, 0.08);
-    color: #fff;
+    background: var(--panel-button-hover-bg);
+    color: var(--text-primary);
 }
 
 .file-item.active {
-    background: rgba(0, 255, 255, 0.16);
-    color: #fff;
+    background: var(--panel-chip-bg);
+    color: var(--text-primary);
     border-left: 3px solid var(--neon-cyan);
     /* Overleaf Green Link */
 }
@@ -1970,12 +2078,12 @@ body {
 
 .editor-toolbar {
     height: 48px;
-    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    border-bottom: 1px solid var(--panel-toolbar-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 15px;
-    background: linear-gradient(90deg, rgba(8, 12, 20, 0.95), rgba(26, 32, 45, 0.95));
+    background: var(--panel-toolbar-bg);
     box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
 }
 
@@ -1994,13 +2102,13 @@ body {
 
 .current-file {
     font-family: var(--font-retro);
-    color: #e6f6ff;
+    color: var(--text-primary);
     font-weight: 500;
     font-size: 0.9rem;
-    background: rgba(0, 255, 255, 0.1);
+    background: var(--panel-chip-bg);
     padding: 4px 10px;
     border-radius: 6px;
-    border: 1px solid rgba(0, 255, 255, 0.35);
+    border: 1px solid var(--panel-chip-border);
     max-width: 200px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -2011,9 +2119,9 @@ body {
 .editor-stats {
     font-size: 0.7rem;
     font-family: var(--font-retro);
-    color: #b9c6d3;
-    background: rgba(0, 255, 255, 0.08);
-    border: 1px solid rgba(0, 255, 255, 0.2);
+    color: var(--panel-chip-text);
+    background: var(--panel-chip-bg);
+    border: 1px solid var(--panel-chip-border);
     padding: 4px 8px;
     border-radius: 4px;
     white-space: nowrap;
@@ -2028,9 +2136,9 @@ body {
 }
 
 .btn-tool {
-    background: rgba(8, 12, 20, 0.4);
-    color: #c9d3dd;
-    border: 1px solid rgba(0, 255, 255, 0.12);
+    background: var(--panel-button-bg);
+    color: var(--panel-button-text);
+    border: 1px solid var(--panel-button-border);
     padding: 6px 12px;
     border-radius: 4px;
     font-size: 0.85rem;
@@ -2045,19 +2153,19 @@ body {
 }
 
 .btn-tool:hover {
-    background: rgba(0, 255, 255, 0.12);
-    color: #fff;
-    border-color: rgba(0, 255, 255, 0.4);
+    background: var(--panel-button-hover-bg);
+    color: var(--text-primary);
+    border-color: var(--panel-button-hover-border);
 }
 
 .btn-tool:active {
     transform: scale(0.95);
-    background: #2a2f35;
+    background: var(--panel-button-active-bg);
 }
 
 .btn-tool:focus {
     outline: none;
-    box-shadow: 0 0 0 2px rgba(0, 255, 255, 0.3);
+    box-shadow: 0 0 0 2px var(--panel-button-focus);
 }
 
 .btn-tool:disabled {
@@ -2066,7 +2174,7 @@ body {
 }
 
 .btn-tool.active {
-    background: rgba(0, 255, 255, 0.15);
+    background: var(--panel-chip-bg);
     color: var(--neon-cyan);
     border-color: var(--neon-cyan);
 }
@@ -2132,13 +2240,13 @@ body {
 .line-numbers {
     width: 50px;
     min-width: 50px;
-    background: rgba(5, 8, 14, 0.8);
-    border-right: 1px solid rgba(0, 255, 255, 0.15);
+    background: var(--line-number-bg);
+    border-right: 1px solid var(--line-number-border);
     padding: 20px 0;
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 14px;
     line-height: 1.5;
-    color: #6a7a8f;
+    color: var(--line-number-text);
     text-align: right;
     user-select: none;
     overflow: hidden;
@@ -2158,8 +2266,8 @@ body {
 }
 
 .line-numbers span.active {
-    color: var(--neon-cyan);
-    background: rgba(0, 255, 255, 0.05);
+    color: var(--line-number-active-text);
+    background: var(--line-number-active-bg);
 }
 
 /* Panel Resizer */
@@ -2377,8 +2485,8 @@ body {
 
 .editor-mode-toggle {
     display: inline-flex;
-    background: rgba(10, 16, 24, 0.6);
-    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: var(--panel-chip-bg);
+    border: 1px solid var(--panel-chip-border);
     border-radius: 999px;
     overflow: hidden;
 }
@@ -2386,7 +2494,7 @@ body {
 .btn-mode {
     border: none;
     background: transparent;
-    color: rgba(140, 220, 230, 0.8);
+    color: var(--panel-tab-text);
     padding: 4px 10px;
     font-size: 0.65rem;
     letter-spacing: 0.2em;
@@ -2395,8 +2503,8 @@ body {
 }
 
 .btn-mode.active {
-    background: rgba(0, 255, 255, 0.2);
-    color: #f4fdff;
+    background: var(--panel-tab-active-bg);
+    color: var(--panel-tab-active-text);
     box-shadow: 0 0 10px rgba(0, 255, 255, 0.25);
 }
 
@@ -2405,16 +2513,16 @@ body {
 }
 
 .code-editor::-webkit-scrollbar-track {
-    background: #1a1a1a;
+    background: var(--panel-soft-bg-2);
 }
 
 .code-editor::-webkit-scrollbar-thumb {
-    background: #3a3a3a;
+    background: var(--panel-button-hover-border);
     border-radius: 4px;
 }
 
 .code-editor::-webkit-scrollbar-thumb:hover {
-    background: #4a4a4a;
+    background: var(--neon-cyan);
 }
 
 .latex-autocomplete {
@@ -2425,8 +2533,8 @@ body {
     min-width: 220px;
     max-width: 320px;
     max-height: 240px;
-    background: rgba(6, 10, 18, 0.98);
-    border: 1px solid rgba(0, 255, 255, 0.35);
+    background: var(--panel-bg);
+    border: 1px solid var(--panel-tab-border);
     border-radius: 10px;
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6), 0 0 18px rgba(0, 255, 255, 0.2);
     z-index: 20;
@@ -2443,9 +2551,9 @@ body {
     font-size: 0.7rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: rgba(160, 255, 255, 0.9);
-    background: linear-gradient(90deg, rgba(0, 255, 255, 0.18), rgba(0, 0, 0, 0));
-    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    color: var(--panel-tab-text);
+    background: var(--panel-title-bg);
+    border-bottom: 1px solid var(--panel-chip-border);
 }
 
 .autocomplete-list {
@@ -2461,14 +2569,14 @@ body {
     padding: 8px 12px;
     font-family: 'VT323', monospace;
     font-size: 1rem;
-    color: #e8f6ff;
+    color: var(--text-primary);
     cursor: pointer;
 }
 
 .autocomplete-item:hover,
 .autocomplete-item.active {
-    background: rgba(0, 255, 255, 0.14);
-    color: #ffffff;
+    background: var(--panel-button-hover-bg);
+    color: var(--text-primary);
 }
 
 .autocomplete-item.disabled {
@@ -2480,14 +2588,14 @@ body {
     font-size: 0.7rem;
     letter-spacing: 0.2em;
     text-transform: uppercase;
-    color: rgba(120, 220, 230, 0.8);
+    color: var(--text-secondary);
     flex-shrink: 0;
 }
 
 .preview-view {
     flex: 1;
     min-width: 200px;
-    background: #525659;
+    background: var(--preview-bg);
     position: relative;
     overflow: hidden;
     display: flex;
@@ -2496,8 +2604,8 @@ body {
 
 .preview-toolbar {
     height: 40px;
-    background: linear-gradient(90deg, rgba(15, 20, 30, 0.95), rgba(35, 42, 55, 0.95));
-    border-bottom: 1px solid rgba(0, 255, 255, 0.18);
+    background: var(--preview-toolbar-bg);
+    border-bottom: 1px solid var(--preview-toolbar-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -2554,9 +2662,9 @@ body {
 }
 
 .btn-compile-download {
-    background: linear-gradient(135deg, #2f3338 0%, #3a3f45 100%);
-    color: #e6e6e6;
-    border: 1px solid #4a4f56;
+    background: var(--panel-button-bg);
+    color: var(--panel-button-text);
+    border: 1px solid var(--panel-button-border);
     padding: 6px 14px;
     border-radius: 16px;
     cursor: pointer;
@@ -2569,10 +2677,10 @@ body {
 }
 
 .btn-compile-download:hover:not(:disabled) {
-    background: linear-gradient(135deg, #454a52 0%, #525860 100%);
-    border-color: var(--neon-cyan);
-    color: var(--neon-cyan);
-    box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+    background: var(--panel-button-hover-bg);
+    border-color: var(--panel-button-hover-border);
+    color: var(--text-primary);
+    box-shadow: 0 0 10px var(--panel-button-focus);
     transform: translateY(-1px);
 }
 
@@ -2587,7 +2695,7 @@ body {
 }
 
 .page-count {
-    color: #dcdcdc;
+    color: var(--text-primary);
     font-size: 0.8rem;
 }
 
@@ -2598,7 +2706,7 @@ body {
     flex-direction: column;
     align-items: center;
     padding: 30px;
-    background: #525659;
+    background: var(--preview-bg);
 }
 
 .pdf-page {
@@ -2628,8 +2736,8 @@ body {
     right: 0;
     bottom: 0;
     top: 40px;
-    background: rgba(8, 12, 20, 0.95);
-    border-top: 1px solid rgba(0, 255, 255, 0.2);
+    background: var(--panel-soft-bg);
+    border-top: 1px solid var(--panel-chip-border);
     z-index: 90;
     display: flex;
     flex-direction: column;
@@ -2640,8 +2748,8 @@ body {
     align-items: center;
     justify-content: space-between;
     padding: 8px 12px;
-    background: rgba(12, 18, 28, 0.95);
-    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    background: var(--panel-soft-bg);
+    border-bottom: 1px solid var(--panel-chip-border);
 }
 
 .compile-log-title {
@@ -2649,7 +2757,7 @@ body {
     align-items: center;
     gap: 8px;
     font-size: 0.8rem;
-    color: #e6e6e6;
+    color: var(--text-primary);
 }
 
 .compile-log-actions {
@@ -2659,9 +2767,9 @@ body {
 }
 
 .compile-log-filter {
-    background: rgba(6, 10, 16, 0.9);
-    border: 1px solid rgba(0, 255, 255, 0.2);
-    color: #dcdcdc;
+    background: var(--panel-input-bg);
+    border: 1px solid var(--panel-input-border);
+    color: var(--panel-input-text);
     font-family: var(--font-retro);
     font-size: 0.75rem;
     padding: 4px 8px;
@@ -2671,9 +2779,9 @@ body {
 .compile-log-meta {
     padding: 6px 12px;
     font-size: 0.75rem;
-    color: #9aa2aa;
-    background: rgba(10, 15, 25, 0.9);
-    border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+    color: var(--text-secondary);
+    background: var(--panel-soft-bg);
+    border-bottom: 1px solid var(--panel-chip-border);
 }
 
 .compile-log-content {
@@ -2683,7 +2791,7 @@ body {
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 0.8rem;
     line-height: 1.4;
-    color: #dcdcdc;
+    color: var(--text-primary);
     white-space: pre-wrap;
 }
 
@@ -2986,18 +3094,18 @@ body {
     gap: 8px;
     padding: 10px 15px;
     border-bottom: 1px solid var(--border-color);
-    background: rgba(10, 15, 25, 0.9);
+    background: var(--panel-soft-bg);
 }
 
 .history-toolbar label {
     font-size: 0.7rem;
-    color: #9aa2aa;
+    color: var(--text-secondary);
 }
 
 .history-toolbar select {
-    background: rgba(6, 10, 16, 0.9);
-    border: 1px solid rgba(0, 255, 255, 0.2);
-    color: #dcdcdc;
+    background: var(--panel-input-bg);
+    border: 1px solid var(--panel-input-border);
+    color: var(--panel-input-text);
     font-family: var(--font-retro);
     font-size: 0.75rem;
     padding: 4px 8px;
@@ -3015,37 +3123,37 @@ body {
     border-right: 1px solid var(--border-color);
     overflow-y: auto;
     padding: 10px;
-    background: rgba(8, 12, 20, 0.9);
+    background: var(--panel-soft-bg);
 }
 
 .history-version-item {
     padding: 8px 10px;
-    border: 1px solid rgba(0, 255, 255, 0.12);
+    border: 1px solid var(--panel-chip-border);
     border-radius: 6px;
     margin-bottom: 8px;
     cursor: pointer;
     transition: all 0.15s ease;
-    background: rgba(8, 12, 20, 0.75);
+    background: var(--panel-soft-bg);
 }
 
 .history-version-item:hover {
-    border-color: rgba(0, 255, 255, 0.6);
-    background: rgba(0, 255, 255, 0.08);
+    border-color: var(--neon-cyan);
+    background: var(--panel-button-hover-bg);
 }
 
 .history-version-item.active {
-    border-color: rgba(0, 255, 255, 0.8);
-    background: rgba(0, 255, 255, 0.18);
+    border-color: var(--neon-cyan);
+    background: var(--panel-chip-bg);
 }
 
 .history-version-item .version-title {
     font-size: 0.75rem;
-    color: #e6e6e6;
+    color: var(--text-primary);
 }
 
 .history-version-item .version-meta {
     font-size: 0.65rem;
-    color: #9aa2aa;
+    color: var(--text-secondary);
     margin-top: 4px;
 }
 
@@ -3063,8 +3171,8 @@ body {
     justify-content: space-between;
     gap: 8px;
     padding: 6px 8px;
-    background: rgba(10, 15, 25, 0.8);
-    border: 1px solid rgba(0, 255, 255, 0.2);
+    background: var(--panel-soft-bg);
+    border: 1px solid var(--panel-chip-border);
     border-radius: 6px;
 }
 
@@ -3091,7 +3199,7 @@ body {
     border-radius: 6px;
     font-family: 'Consolas', 'Monaco', monospace;
     font-size: 0.8rem;
-    color: #dcdcdc;
+    color: var(--text-primary);
     white-space: pre-wrap;
     word-break: break-word;
 }
@@ -4008,13 +4116,13 @@ body {
 }
 
 .context-code {
-    background: #0d0d15;
-    border: 1px solid #333;
+    background: var(--panel-soft-bg);
+    border: 1px solid var(--panel-border);
     border-radius: 4px;
     padding: 8px;
     font-family: 'Consolas', monospace;
     font-size: 0.75rem;
-    color: #a0a0c0;
+    color: var(--text-secondary);
     max-height: 60px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -4122,8 +4230,8 @@ body {
 }
 
 .copilot-message .content pre {
-    background: #0d0d15;
-    border: 1px solid #333;
+    background: var(--panel-soft-bg);
+    border: 1px solid var(--panel-border);
     border-radius: 6px;
     padding: 10px;
     margin: 8px 0;
@@ -4806,7 +4914,7 @@ body {
         min-height: 60px;
         max-height: 120px;
         border-right: none;
-        border-bottom: 1px solid #333;
+        border-bottom: 1px solid var(--panel-border);
         overflow: hidden;
     }
 
@@ -4836,17 +4944,17 @@ body {
         padding: 4px 10px;
         font-size: 0.75rem;
         border-radius: 15px;
-        background: #2f3439;
-        border: 1px solid #444;
+        background: var(--panel-button-bg);
+        border: 1px solid var(--panel-border);
         border-left: none;
         white-space: nowrap;
         flex-shrink: 0;
     }
 
     .file-item.active {
-        background: #148c5a;
-        border-color: #148c5a;
-        color: white;
+        background: var(--panel-chip-bg);
+        border-color: var(--panel-chip-border);
+        color: var(--text-primary);
     }
 
     .file-item i {
@@ -4898,17 +5006,17 @@ body {
         display: flex !important;
         gap: 0;
         margin-left: auto;
-        background: #1a1a1a;
+        background: var(--panel-soft-bg-2);
         padding: 3px;
         border-radius: 20px;
-        border: 1px solid #444;
+        border: 1px solid var(--panel-border);
         flex-shrink: 0;
     }
 
     .btn-mobile-tab {
         background: transparent;
         border: none;
-        color: #888;
+        color: var(--panel-tab-text);
         padding: 6px 14px;
         font-size: 0.65rem;
         font-family: var(--font-pixel);
@@ -4919,8 +5027,8 @@ body {
     }
 
     .btn-mobile-tab.active {
-        background: var(--neon-cyan);
-        color: #000;
+        background: var(--panel-tab-active-bg);
+        color: var(--panel-tab-active-text);
         box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
     }
 
