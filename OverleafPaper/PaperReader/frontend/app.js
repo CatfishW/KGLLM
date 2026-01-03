@@ -4487,17 +4487,25 @@ const EditorController = {
         if (!editor || this.state.currentFindIndex < 0) return;
 
         const pos = this.state.findMatches[this.state.currentFindIndex];
-        if (forceFocus) {
+        const findInput = this.elements.findInput;
+        const keepFindFocus = document.activeElement === findInput;
+        if (forceFocus && !keepFindFocus) {
             editor.focus();
         }
         editor.setSelectionRange(pos, pos + query.length);
 
         // Scroll to selection
-        const lineHeight = 20;
+        const lineHeight = parseFloat(getComputedStyle(editor).lineHeight) || 20;
         const linesBeforeMatch = editor.value.substring(0, pos).split('\n').length;
         editor.scrollTop = (linesBeforeMatch - 5) * lineHeight;
 
         this.elements.findCount.textContent = `${this.state.currentFindIndex + 1}/${this.state.findMatches.length}`;
+
+        if (keepFindFocus && findInput) {
+            requestAnimationFrame(() => {
+                findInput.focus({ preventScroll: true });
+            });
+        }
     },
 
     clearFindHighlights() {
