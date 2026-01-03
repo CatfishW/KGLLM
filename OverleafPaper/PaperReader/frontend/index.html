@@ -52,6 +52,13 @@
                         <span class="action-value" id="auth-subtitle">GUEST</span>
                     </span>
                 </button>
+                <button class="header-action" id="btn-theme" title="Theme">
+                    <i class="bi bi-palette"></i>
+                    <span class="action-text">
+                        <span class="action-label">THEME</span>
+                        <span class="action-value" id="theme-label">NEON</span>
+                    </span>
+                </button>
             </div>
             <div class="header-stats">
                 <div class="nav-tabs">
@@ -259,8 +266,12 @@
                         <div class="source-view" id="source-view">
                             <div class="line-numbers" id="line-numbers"></div>
                             <div class="editor-surface">
-                                <textarea id="code-editor" class="code-editor" placeholder="Select a file to edit..."
-                                    disabled></textarea>
+                                <div class="code-editor-wrap">
+                                    <pre class="code-highlight" id="code-highlight"
+                                        aria-hidden="true"><code id="code-highlight-content"></code></pre>
+                                    <textarea id="code-editor" class="code-editor code-editor-overlay"
+                                        placeholder="Select a file to edit..." disabled></textarea>
+                                </div>
                                 <div class="visual-editor-wrapper" id="visual-editor-wrapper">
                                     <div class="visual-toolbar" id="visual-toolbar">
                                         <button class="btn-tool" data-action="bold" title="Bold">

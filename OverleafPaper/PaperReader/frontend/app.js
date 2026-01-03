@@ -50,6 +50,7 @@ async function init() {
         searchInput.value = '';
     }
     setupMobileInteractions();
+    ThemeController.init();
     AuthController.init();
     ProjectManager.init();
     setupEditor(); // Initialize Editor
@@ -759,6 +760,50 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+/**
+ * Theme Controller - switch between UI themes
+ */
+const ThemeController = {
+    themes: [
+        { id: 'neon', label: 'NEON' },
+        { id: 'light', label: 'LIGHT' },
+        { id: 'dusk', label: 'DUSK' }
+    ],
+    currentTheme: 'neon',
+    elements: {
+        button: null,
+        label: null
+    },
+
+    init() {
+        this.elements.button = document.getElementById('btn-theme');
+        this.elements.label = document.getElementById('theme-label');
+        if (!this.elements.button || !this.elements.label) return;
+
+        const saved = localStorage.getItem('paperreader_theme');
+        const fallback = this.themes.find(item => item.id === saved) ? saved : 'neon';
+        this.applyTheme(fallback);
+
+        this.elements.button.addEventListener('click', () => this.cycleTheme());
+    },
+
+    cycleTheme() {
+        const index = this.themes.findIndex(item => item.id === this.currentTheme);
+        const nextIndex = (index + 1) % this.themes.length;
+        this.applyTheme(this.themes[nextIndex].id);
+    },
+
+    applyTheme(themeId) {
+        const theme = this.themes.find(item => item.id === themeId) || this.themes[0];
+        this.currentTheme = theme.id;
+        document.documentElement.dataset.theme = theme.id;
+        localStorage.setItem('paperreader_theme', theme.id);
+        if (this.elements.label) {
+            this.elements.label.textContent = theme.label;
+        }
+    }
+};
 
 /**
  * Auth Controller - local account management
