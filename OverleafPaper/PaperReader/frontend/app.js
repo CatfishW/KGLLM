@@ -4134,13 +4134,19 @@ const EditorController = {
         try {
             const res = await fetch(this.withProjectParam(`${API_BASE}/api/citations/map`));
             const data = await res.json();
-            this.state.citationMap = data.mapping || {};
+            let mapping = data.mapping || {};
+            if (!Object.keys(mapping).length) {
+                mapping = await this.buildCitationMapFallback();
+            }
+            this.state.citationMap = mapping;
             this.state.citationMapNormalized = this.buildNormalizedCitationMap(this.state.citationMap);
             this.state.citationKeys = Object.keys(this.state.citationMap).sort();
         } catch (e) {
             console.error("Failed to load citation map", e);
-            this.state.citationMapNormalized = {};
-            this.state.citationKeys = [];
+            const fallback = await this.buildCitationMapFallback();
+            this.state.citationMap = fallback;
+            this.state.citationMapNormalized = this.buildNormalizedCitationMap(this.state.citationMap);
+            this.state.citationKeys = Object.keys(this.state.citationMap).sort();
         }
     },
 
@@ -4629,6 +4635,142 @@ const EditorController = {
             normalized[norm] = value;
         });
         return normalized;
+    },
+
+    pickBibFilename() {
+        const bibFiles = this.state.files.filter(file => file.name.endsWith('.bib'));
+        if (!bibFiles.length) return null;
+        const preferred = ['ref.bib', 'references.bib', 'main.bib'];
+        for (const name of preferred) {
+            if (bibFiles.some(file => file.name === name)) {
+                return name;
+            }
+        }
+        return bibFiles[0].name;
+    },
+
+    async fetchPapersList() {
+        if (Array.isArray(window.papers) && window.papers.length) {
+            return window.papers;
+        }
+        try {
+            const params = new URLSearchParams({
+                sort_by: sortBySelect?.value || 'year',
+                sort_order: sortOrder || 'desc'
+            });
+            const response = await fetch(`${API_BASE}/api/papers?${params}`);
+            if (!response.ok) return [];
+            const data = await response.json();
+            return data.papers || [];
+        } catch (e) {
+            console.warn('Failed to fetch papers list', e);
+            return [];
+        }
+    },
+
+    parseBibContent(content) {
+        const entries = {};
+        if (!content) return entries;
+        const rawEntries = content.split('@');
+        rawEntries.forEach(entry => {
+            if (!entry.trim()) return;
+            const lines = entry.split('\n');
+            const firstLine = lines[0]?.trim() || '';
+            const matchKey = firstLine.match(/^\w+\s*{\s*([^,]+),/);
+            if (!matchKey) return;
+            const key = matchKey[1]?.trim();
+            if (!key) return;
+            let title = null;
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.toLowerCase().startsWith('title')) continue;
+                let clean = trimmed.replace(/^title\s*=\s*[{"']?/i, '');
+                clean = clean.replace(/[}"'],?$/g, '');
+                title = clean.trim();
+                break;
+            }
+            if (title) {
+                entries[key] = title;
+            }
+        });
+        return entries;
+    },
+
+    normalizeTitle(value) {
+        if (!value) return '';
+        return value
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, ' ')
+            .trim();
+    },
+
+    titleSimilarity(a, b) {
+        if (!a || !b) return 0;
+        const aTokens = new Set(a.split(' ').filter(token => token.length > 2));
+        const bTokens = new Set(b.split(' ').filter(token => token.length > 2));
+        if (!aTokens.size || !bTokens.size) return 0;
+        let intersection = 0;
+        aTokens.forEach(token => {
+            if (bTokens.has(token)) intersection += 1;
+        });
+        return (2 * intersection) / (aTokens.size + bTokens.size);
+    },
+
+    matchBibEntriesToPapers(bibEntries, papersList) {
+        const mapping = {};
+        const normalizedPapers = papersList.map(paper => ({
+            id: paper.id,
+            title: paper.title || '',
+            norm: this.normalizeTitle(paper.title || '')
+        }));
+
+        Object.entries(bibEntries).forEach(([key, title]) => {
+            const normTitle = this.normalizeTitle(title);
+            if (!normTitle) return;
+
+            let best = null;
+            let bestScore = 0;
+
+            for (const paper of normalizedPapers) {
+                if (!paper.norm) continue;
+                if (paper.norm === normTitle) {
+                    best = paper;
+                    bestScore = 1;
+                    break;
+                }
+                if (paper.norm.includes(normTitle) || normTitle.includes(paper.norm)) {
+                    const score = 0.85;
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = paper;
+                    }
+                    continue;
+                }
+                const score = this.titleSimilarity(paper.norm, normTitle);
+                if (score > bestScore) {
+                    bestScore = score;
+                    best = paper;
+                }
+            }
+
+            if (best && bestScore >= 0.55) {
+                mapping[key] = best.id;
+            }
+        });
+
+        return mapping;
+    },
+
+    async buildCitationMapFallback() {
+        const bibName = this.pickBibFilename();
+        if (!bibName) return {};
+        const bibContent = this.state.fileContents[bibName] || await this.fetchFileContent(bibName);
+        if (!bibContent) return {};
+        const bibEntries = this.parseBibContent(bibContent);
+        if (!Object.keys(bibEntries).length) return {};
+        const papersList = await this.fetchPapersList();
+        if (!papersList.length) return {};
+        return this.matchBibEntriesToPapers(bibEntries, papersList);
     },
 
     // ==========================================
