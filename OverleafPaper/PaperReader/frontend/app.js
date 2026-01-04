@@ -1600,6 +1600,7 @@ const EditorController = {
     state: {
         files: [],
         currentFile: null,
+        lastCompileTarget: null,
         citationMap: {},
         citationKeys: [],
         pdfDoc: null,
@@ -2313,6 +2314,29 @@ const EditorController = {
         }
     },
 
+    saveLastCompileTarget(filename) {
+        if (!filename) return;
+        try {
+            const key = this.getProjectStorageKey('paperreader_last_compile_target');
+            localStorage.setItem(key, JSON.stringify({ filename, savedAt: Date.now() }));
+        } catch (e) {
+            console.warn('Failed to save last compile target', e);
+        }
+    },
+
+    loadLastCompileTarget() {
+        try {
+            const key = this.getProjectStorageKey('paperreader_last_compile_target');
+            const raw = localStorage.getItem(key);
+            if (!raw) return;
+            const data = JSON.parse(raw);
+            if (!data?.filename) return;
+            this.state.lastCompileTarget = data.filename;
+        } catch (e) {
+            console.warn('Failed to load last compile target', e);
+        }
+    },
+
     restoreLastCompiledPdf() {
         if (this.isLocalProject()) return;
         if (this.state.lastCompiledPdfUrl) return;
@@ -2322,6 +2346,89 @@ const EditorController = {
         this.state.lastCompiledPdfUrl = url;
         this.elements.btnDownloadCompiled.disabled = false;
         this.loadPDF(saved.filename);
+    },
+
+    isMainTexContent(content) {
+        if (!content) return false;
+        const text = content.toLowerCase();
+        return text.includes('\\documentclass') || text.includes('\\begin{document}');
+    },
+
+    async fetchFileContent(filename) {
+        try {
+            const res = await fetch(this.withProjectParam(`${API_BASE}/api/project/content/${filename}`));
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data.content ?? '';
+        } catch (e) {
+            console.warn('Failed to fetch file content', filename, e);
+            return null;
+        }
+    },
+
+    async resolveCompileTarget() {
+        const texFiles = this.state.files.filter(f => f.name.endsWith('.tex'));
+        if (texFiles.length === 0) return null;
+
+        const current = this.state.currentFile;
+        if (current && current.endsWith('.tex')) {
+            const currentContent = this.state.fileContents[current];
+            if (this.isMainTexContent(currentContent)) {
+                return current;
+            }
+        }
+
+        if (this.state.lastCompileTarget) {
+            const last = this.state.lastCompileTarget;
+            if (texFiles.some(f => f.name === last)) {
+                const lastContent = this.state.fileContents[last];
+                if (this.isMainTexContent(lastContent)) {
+                    return last;
+                }
+            }
+        }
+
+        for (const file of texFiles) {
+            const content = this.state.fileContents[file.name];
+            if (this.isMainTexContent(content)) {
+                return file.name;
+            }
+        }
+
+        const priorityNames = [
+            'lam_main_latest.tex',
+            'main.tex',
+            'paper.tex',
+            'thesis.tex',
+            'root.tex'
+        ];
+        const sorted = [...texFiles].sort((a, b) => {
+            const aIndex = priorityNames.indexOf(a.name);
+            const bIndex = priorityNames.indexOf(b.name);
+            if (aIndex !== -1 || bIndex !== -1) {
+                if (aIndex === -1) return 1;
+                if (bIndex === -1) return -1;
+                return aIndex - bIndex;
+            }
+            return a.name.localeCompare(b.name);
+        });
+
+        for (const file of sorted) {
+            if (this.state.fileContents[file.name]) continue;
+            const content = await this.fetchFileContent(file.name);
+            if (content !== null) {
+                this.state.fileContents[file.name] = content;
+                if (this.isMainTexContent(content)) {
+                    return file.name;
+                }
+            }
+        }
+
+        if (current && current.endsWith('.tex')) {
+            return current;
+        }
+
+        return sorted[0]?.name || null;
     },
 
     withProjectParam(url) {
@@ -2401,6 +2508,7 @@ const EditorController = {
             this.renderFileList();
             this.updateHistoryFileOptions();
             this.restoreLastCompiledPdf();
+            this.loadLastCompileTarget();
 
             if (this.state.currentFile) {
                 const exists = this.state.files.find(f => f.name === this.state.currentFile);
@@ -4017,17 +4125,7 @@ const EditorController = {
             this.syncVisualToCode();
         }
 
-        // Always compile the main tex file usually, or the current one?
-        // Let's assume lam_main_latest.tex is the main one or try to identify it.
-        // For this demo, let's just compile the currently selected file if it is .tex,
-        // otherwise default to 'lam_main_latest.tex' if available.
-
-        let target = this.state.currentFile;
-        // fallback
-        if (!target || !target.endsWith('.tex')) {
-            const main = this.state.files.find(f => f.name.includes('main') && f.name.endsWith('.tex'));
-            target = main ? main.name : null;
-        }
+        const target = await this.resolveCompileTarget();
 
         if (!target) {
             alert("Please select a .tex file to compile.");
@@ -4040,7 +4138,7 @@ const EditorController = {
 
         this.state.lastCompileAt = Date.now();
         this.elements.compileStatus.style.display = 'flex';
-        this.elements.compileStatus.innerHTML = '<span class="spinner-small"></span> Using pdflatex...';
+        this.elements.compileStatus.innerHTML = `<span class="spinner-small"></span> Compiling ${target}...`;
 
         try {
             const res = await fetch(this.withProjectParam(`${API_BASE}/api/compile`), {
@@ -4068,6 +4166,8 @@ const EditorController = {
                 const pdfFilename = result.pdf_path.split(/[\\/]/).pop();
                 this.state.lastCompiledPdfUrl = this.getCompiledPdfUrl(pdfFilename);
                 this.saveLastCompiledPdf(pdfFilename);
+                this.state.lastCompileTarget = target;
+                this.saveLastCompileTarget(target);
                 this.elements.btnDownloadCompiled.disabled = false;
                 this.loadPDF(pdfFilename); // filename on server, resolved via API
                 this.saveToHistory('Compiled document', target);
