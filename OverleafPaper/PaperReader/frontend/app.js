@@ -1602,6 +1602,7 @@ const EditorController = {
         currentFile: null,
         lastCompileTarget: null,
         citationMap: {},
+        citationMapNormalized: {},
         citationKeys: [],
         pdfDoc: null,
         lastCompiledPdfUrl: null,
@@ -4126,6 +4127,7 @@ const EditorController = {
     async loadCitationMap() {
         if (this.isLocalProject()) {
             this.state.citationMap = {};
+            this.state.citationMapNormalized = {};
             this.state.citationKeys = [];
             return;
         }
@@ -4133,9 +4135,11 @@ const EditorController = {
             const res = await fetch(this.withProjectParam(`${API_BASE}/api/citations/map`));
             const data = await res.json();
             this.state.citationMap = data.mapping || {};
+            this.state.citationMapNormalized = this.buildNormalizedCitationMap(this.state.citationMap);
             this.state.citationKeys = Object.keys(this.state.citationMap).sort();
         } catch (e) {
             console.error("Failed to load citation map", e);
+            this.state.citationMapNormalized = {};
             this.state.citationKeys = [];
         }
     },
@@ -4195,6 +4199,7 @@ const EditorController = {
                 this.saveLastCompileTarget(target);
                 this.elements.btnDownloadCompiled.disabled = false;
                 this.loadPDF(pdfFilename, compiledAt); // filename on server, resolved via API
+                this.loadCitationMap();
                 this.saveToHistory('Compiled document', target);
 
                 // Success animation on button
@@ -4551,15 +4556,79 @@ const EditorController = {
             return;
         }
 
-        if (key.startsWith('cite.')) key = key.substring(5);
+        const candidates = this.expandCitationCandidates(key);
+        const directHit = this.state.citationMap[key];
+        const normalizedMap = this.state.citationMapNormalized || {};
 
-        if (this.state.citationMap[key]) {
-            const paperId = this.state.citationMap[key];
-            openPaper(paperId); // Global function
-        } else {
-            console.log('Citation not found in map:', key);
-            showToast('Citation not linked to a PDF');
+        if (directHit) {
+            openPaper(directHit); // Global function
+            return;
         }
+
+        for (const candidate of candidates) {
+            const normalized = this.normalizeCitationKey(candidate);
+            if (normalized && normalizedMap[normalized]) {
+                openPaper(normalizedMap[normalized]);
+                return;
+            }
+        }
+
+        if (!Object.keys(this.state.citationMap || {}).length) {
+            showToast('No citation map available');
+            return;
+        }
+
+        console.log('Citation not found in map:', key, candidates);
+        showToast('Citation not linked to a PDF');
+    },
+
+    normalizeCitationKey(raw) {
+        if (!raw) return '';
+        let value = String(raw).trim().toLowerCase();
+        value = value.replace(/^cite[.:_-]?/, '');
+        value = value.replace(/[{}]/g, '');
+        value = value.replace(/\s+/g, '');
+        return value;
+    },
+
+    expandCitationCandidates(raw) {
+        if (!raw) return [];
+        const value = String(raw).trim();
+        const cleaned = value.replace(/[{}]/g, '');
+        const candidates = [value, cleaned];
+
+        if (cleaned.startsWith('cite.')) {
+            candidates.push(cleaned.substring(5));
+        }
+        if (cleaned.startsWith('cite:')) {
+            candidates.push(cleaned.substring(5));
+        }
+        if (cleaned.startsWith('cite_')) {
+            candidates.push(cleaned.substring(5));
+        }
+        if (cleaned.startsWith('cite-')) {
+            candidates.push(cleaned.substring(5));
+        }
+
+        const stripped = cleaned.replace(/^cite[.:_-]?/, '');
+        candidates.push(stripped);
+
+        if (stripped.includes('.')) {
+            const parts = stripped.split('.');
+            if (parts[0]) candidates.push(parts[0]);
+        }
+
+        return Array.from(new Set(candidates.filter(Boolean)));
+    },
+
+    buildNormalizedCitationMap(mapping) {
+        const normalized = {};
+        Object.entries(mapping || {}).forEach(([key, value]) => {
+            const norm = this.normalizeCitationKey(key);
+            if (!norm || normalized[norm]) return;
+            normalized[norm] = value;
+        });
+        return normalized;
     },
 
     // ==========================================
