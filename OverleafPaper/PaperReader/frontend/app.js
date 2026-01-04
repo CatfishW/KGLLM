@@ -2286,15 +2286,38 @@ const EditorController = {
         return `${baseKey}_${projectId}`;
     },
 
-    getCompiledPdfUrl(filename) {
-        return this.withProjectParam(`${API_BASE}/api/project/file/${filename}`);
+    appendQueryParam(url, key, value) {
+        try {
+            const parsed = new URL(url, window.location.origin);
+            parsed.searchParams.set(key, value);
+            return parsed.toString();
+        } catch (e) {
+            const joiner = url.includes('?') ? '&' : '?';
+            return `${url}${joiner}${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
+        }
     },
 
-    saveLastCompiledPdf(filename) {
+    getCompiledPdfUrl(filename, cacheKey) {
+        const url = this.withProjectParam(`${API_BASE}/api/project/file/${filename}`);
+        if (!cacheKey) return url;
+        return this.appendQueryParam(url, 'ts', cacheKey);
+    },
+
+    extractPdfFilename(value) {
+        if (!value) return null;
+        try {
+            const parsed = new URL(value, window.location.origin);
+            return parsed.pathname.split('/').pop() || null;
+        } catch (e) {
+            return value.split('?')[0].split(/[\\/]/).pop() || null;
+        }
+    },
+
+    saveLastCompiledPdf(filename, savedAt) {
         if (!filename) return;
         try {
             const key = this.getProjectStorageKey('paperreader_last_compiled_pdf');
-            localStorage.setItem(key, JSON.stringify({ filename, savedAt: Date.now() }));
+            localStorage.setItem(key, JSON.stringify({ filename, savedAt: savedAt || Date.now() }));
         } catch (e) {
             console.warn('Failed to save last compiled PDF', e);
         }
@@ -2342,10 +2365,11 @@ const EditorController = {
         if (this.state.lastCompiledPdfUrl) return;
         const saved = this.loadLastCompiledPdf();
         if (!saved) return;
-        const url = this.getCompiledPdfUrl(saved.filename);
+        const savedAt = saved.savedAt || Date.now();
+        const url = this.getCompiledPdfUrl(saved.filename, savedAt);
         this.state.lastCompiledPdfUrl = url;
         this.elements.btnDownloadCompiled.disabled = false;
-        this.loadPDF(saved.filename);
+        this.loadPDF(saved.filename, savedAt);
     },
 
     isMainTexContent(content) {
@@ -4164,12 +4188,13 @@ const EditorController = {
 
                 // Show PDF
                 const pdfFilename = result.pdf_path.split(/[\\/]/).pop();
-                this.state.lastCompiledPdfUrl = this.getCompiledPdfUrl(pdfFilename);
-                this.saveLastCompiledPdf(pdfFilename);
+                const compiledAt = Date.now();
+                this.state.lastCompiledPdfUrl = this.getCompiledPdfUrl(pdfFilename, compiledAt);
+                this.saveLastCompiledPdf(pdfFilename, compiledAt);
                 this.state.lastCompileTarget = target;
                 this.saveLastCompileTarget(target);
                 this.elements.btnDownloadCompiled.disabled = false;
-                this.loadPDF(pdfFilename); // filename on server, resolved via API
+                this.loadPDF(pdfFilename, compiledAt); // filename on server, resolved via API
                 this.saveToHistory('Compiled document', target);
 
                 // Success animation on button
@@ -4233,16 +4258,36 @@ const EditorController = {
         showToast('Downloading compiled PDF...');
     },
 
-    async loadPDF(pdfPath) {
+    async loadPDF(pdfPath, cacheKey) {
         if (this.isLocalProject()) {
             showToast('PDF preview requires a server project');
             return;
         }
 
-        // The path returned is absolute server path. We need to fetch via API.
-        // Endpoint: /api/project/file/{filename}
-        const filename = pdfPath.split(/[\\/]/).pop();
-        const url = this.withProjectParam(`${API_BASE}/api/project/file/${filename}`);
+        if (!pdfPath) return;
+        let filename = pdfPath;
+        let url = null;
+
+        if (pdfPath.includes('/api/project/file/')) {
+            url = cacheKey ? this.appendQueryParam(pdfPath, 'ts', cacheKey) : pdfPath;
+            try {
+                const parsed = new URL(pdfPath, window.location.origin);
+                filename = parsed.pathname.split('/').pop() || filename;
+            } catch (e) {
+                filename = pdfPath.split(/[\\/]/).pop() || filename;
+            }
+        } else if (pdfPath.startsWith('http://') || pdfPath.startsWith('https://')) {
+            url = cacheKey ? this.appendQueryParam(pdfPath, 'ts', cacheKey) : pdfPath;
+            try {
+                const parsed = new URL(pdfPath);
+                filename = parsed.pathname.split('/').pop() || filename;
+            } catch (e) {
+                filename = pdfPath.split(/[\\/]/).pop() || filename;
+            }
+        } else {
+            filename = pdfPath.split(/[\\/]/).pop() || pdfPath;
+            url = this.getCompiledPdfUrl(filename, cacheKey);
+        }
 
         this.elements.pdfContainer.innerHTML = ''; // Clear
         this.state.currentPreviewPage = 1;
@@ -4430,7 +4475,7 @@ const EditorController = {
             return;
         }
 
-        const pdfName = this.state.lastCompiledPdfUrl.split('/').pop();
+        const pdfName = this.extractPdfFilename(this.state.lastCompiledPdfUrl);
 
         try {
             const res = await fetch(this.withProjectParam(`${API_BASE}/api/synctex`), {
@@ -5375,7 +5420,7 @@ const EditorController = {
         }
 
         const { line, column } = this.getCursorPosition();
-        const pdfName = this.state.lastCompiledPdfUrl?.split('/').pop();
+        const pdfName = this.extractPdfFilename(this.state.lastCompiledPdfUrl);
 
         if (!pdfName) {
             showToast("Compile first to sync");
