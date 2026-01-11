@@ -1,0 +1,159 @@
+// Diffusion Path Scorer Architecture
+digraph {
+	dpi=150 rankdir=TB size="16,20"
+	node [fontname=Arial fontsize=11 shape=box style="rounded,filled"]
+	edge [fontname=Arial fontsize=9]
+	subgraph cluster_input {
+		bgcolor="#FAFAFA" label="INPUT LAYER" style=rounded
+		question_ids [label="Question
+Input IDs
+[B, seq_len]" fillcolor="#E8F4FD"]
+		question_mask [label="Question
+Attention Mask
+[B, seq_len]" fillcolor="#E8F4FD"]
+		path_ids [label="Path
+Input IDs
+[B, C, path_len]" fillcolor="#E8F4FD"]
+		path_mask [label="Path
+Attention Mask
+[B, C, path_len]" fillcolor="#E8F4FD"]
+		timestep [label="Timestep t
+[B]" fillcolor="#E8F4FD"]
+	}
+	subgraph cluster_encoder {
+		bgcolor="#F1F8E9" label="ENCODER: BertModel (109M params, frozen)" style=rounded
+		subgraph cluster_bert_embed {
+			label=BertEmbeddings style=dashed
+			word_embed [label="Word Embeddings
+(30522, 768)" fillcolor="#B3E5FC"]
+			pos_embed [label="Position Embeddings
+(512, 768)" fillcolor="#B3E5FC"]
+			token_type [label="Token Type Embed
+(2, 768)" fillcolor="#B3E5FC"]
+			embed_ln [label="LayerNorm
+(768)" fillcolor="#C8E6C9"]
+			embed_drop [label="Dropout(0.1)" fillcolor="#C8E6C9"]
+		}
+		subgraph cluster_bert_layers {
+			label="BertEncoder (12 Layers)" style=dashed
+			bert_layer_0 [label="BertLayer 0
+Self-Attn + FFN" fillcolor="#C8E6C9"]
+			bert_dots [label="..." shape=none]
+			bert_layer_11 [label="BertLayer 11
+Self-Attn + FFN" fillcolor="#C8E6C9"]
+		}
+		pooler [label="BertPooler
+Linear(768,768)+Tanh" fillcolor="#C8E6C9"]
+		q_pooled [label="Question Pooled
+[B, 768]" fillcolor="#FFF9C4"]
+		p_pooled [label="Path Pooled
+[B, C, 768]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_time {
+		bgcolor="#EDE7F6" label="TIME EMBEDDING (1.2M params)" style=rounded
+		sin_pos [label="Sinusoidal
+Positional Encoding" fillcolor="#B3E5FC"]
+		time_linear1 [label="Linear(384, 768)" fillcolor="#E1BEE7"]
+		time_silu [label="SiLU Activation" fillcolor="#E1BEE7"]
+		time_linear2 [label="Linear(768, 768)" fillcolor="#E1BEE7"]
+		time_out [label="Time Embedding
+[B, 768]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_cross_attn {
+		bgcolor="#FFF3E0" label="CROSS ATTENTION (2.4M params)" style=rounded
+		q_proj [label="Q Projection
+Linear(768, 768)" fillcolor="#FFE0B2"]
+		k_proj [label="K Projection
+Linear(768, 768)" fillcolor="#FFE0B2"]
+		v_proj [label="V Projection
+Linear(768, 768)" fillcolor="#FFE0B2"]
+		attn_weights [label="Attention Weights
+softmax(QK^T/√d)" fillcolor="#FFE0B2"]
+		attn_output [label="Attention Output
+[B, C, 768]" fillcolor="#FFE0B2"]
+		out_proj [label="Output Projection
+Linear(768, 768)" fillcolor="#FFE0B2"]
+		cross_out [label="Cross-Attn Output
+[B, C, 768]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_noise {
+		bgcolor="#FCE4EC" label="NOISE PREDICTOR (3.0M params)" style=rounded
+		noise_concat [label="Concat
+[time_emb, cross_out]" fillcolor="#E1BEE7"]
+		noise_linear1 [label="Linear(1536, 768)" fillcolor="#FFCDD2"]
+		noise_gelu1 [label=GELU fillcolor="#FFCDD2"]
+		noise_linear2 [label="Linear(768, 768)" fillcolor="#FFCDD2"]
+		noise_gelu2 [label=GELU fillcolor="#FFCDD2"]
+		noise_linear3 [label="Linear(768, 768)" fillcolor="#FFCDD2"]
+		noise_out [label="Noise Prediction
+[B, C, 768]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_score {
+		bgcolor="#FFEBEE" label="SCORE HEAD (1.2M params)" style=rounded
+		score_linear1 [label="Linear(768, 256)" fillcolor="#FFCDD2"]
+		score_relu [label=ReLU fillcolor="#FFCDD2"]
+		score_linear2 [label="Linear(256, 1)" fillcolor="#FFCDD2"]
+		path_scores [label="Path Scores
+[B, C]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_hop {
+		bgcolor="#E3F2FD" label="HOP HEAD (297K params)" style=rounded
+		hop_linear1 [label="Linear(768, 128)" fillcolor="#FFCDD2"]
+		hop_relu [label=ReLU fillcolor="#FFCDD2"]
+		hop_linear2 [label="Linear(128, 5)" fillcolor="#FFCDD2"]
+		hop_pred [label="Hop Predictions
+[B, 5]" fillcolor="#FFF9C4"]
+	}
+	subgraph cluster_final {
+		bgcolor="#FFFDE7" label="FINAL OUTPUT" style=rounded
+		softmax [label=Softmax fillcolor="#FFF9C4"]
+		final_scores [label="Final Path Probs
+[B, C]" fillcolor="#FFF9C4"]
+		loss [label="Cross-Entropy Loss" fillcolor="#FFF9C4"]
+	}
+	question_ids -> word_embed [label=tokenize]
+	path_ids -> word_embed [label=tokenize]
+	timestep -> sin_pos [label=encode]
+	word_embed -> embed_ln [label="+"]
+	pos_embed -> embed_ln [label="+"]
+	token_type -> embed_ln [label="+"]
+	embed_ln -> embed_drop
+	embed_drop -> bert_layer_0
+	bert_layer_0 -> bert_dots
+	bert_dots -> bert_layer_11
+	bert_layer_11 -> pooler
+	pooler -> q_pooled [label=question]
+	pooler -> p_pooled [label=paths]
+	sin_pos -> time_linear1
+	time_linear1 -> time_silu
+	time_silu -> time_linear2
+	time_linear2 -> time_out
+	q_pooled -> q_proj [label=Query]
+	p_pooled -> k_proj [label=Key]
+	p_pooled -> v_proj [label=Value]
+	q_proj -> attn_weights
+	k_proj -> attn_weights
+	attn_weights -> attn_output
+	v_proj -> attn_output
+	attn_output -> out_proj
+	out_proj -> cross_out
+	time_out -> noise_concat
+	cross_out -> noise_concat
+	noise_concat -> noise_linear1
+	noise_linear1 -> noise_gelu1
+	noise_gelu1 -> noise_linear2
+	noise_linear2 -> noise_gelu2
+	noise_gelu2 -> noise_linear3
+	noise_linear3 -> noise_out
+	noise_out -> score_linear1
+	score_linear1 -> score_relu
+	score_relu -> score_linear2
+	score_linear2 -> path_scores
+	q_pooled -> hop_linear1
+	hop_linear1 -> hop_relu
+	hop_relu -> hop_linear2
+	hop_linear2 -> hop_pred
+	path_scores -> softmax
+	softmax -> final_scores
+	final_scores -> loss
+}

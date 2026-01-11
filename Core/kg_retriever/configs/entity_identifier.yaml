@@ -1,0 +1,50 @@
+# Entity Identifier Configuration
+# SOTA Entity Identifier with GLiNER NER and Bi-Encoder Linking
+
+# Model architecture
+model:
+  encoder_name: "BAAI/bge-small-en-v1.5"  # BGE for good multilingual performance
+  hidden_size: 384
+  embedding_size: 256
+  use_gliner: true  # Set to false if gliner not installed
+  gliner_model: "urchade/gliner_medium-v2.1"
+  freeze_encoder: false
+  max_seq_length: 128
+
+# Training settings
+training:
+  learning_rate: 2.0e-5
+  warmup_steps: 500
+  temperature: 0.05  # Temperature for contrastive loss
+  batch_size: 32
+  max_epochs: 10
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  precision: "16-mixed"  # Use mixed precision for speed
+
+# Data settings
+data:
+  train_path: "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet"
+  val_path: "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet"
+  test_path: "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet"
+  num_negatives: 7  # Hard negatives per positive
+  num_workers: 4
+
+# Entity index settings
+entity_index:
+  index_path: "entity_embeddings"  # Relative to output_dir
+  use_ivf: true  # Use IVF index for large entity sets
+  nlist: 100  # Number of clusters for IVF
+
+# Logging and checkpointing
+logging:
+  output_dir: "outputs_entity_identifier"
+  experiment_name: "entity_identifier"
+  log_every_n_steps: 50
+  val_check_interval: 0.5  # Validate twice per epoch
+
+# Checkpoint settings
+checkpointing:
+  save_top_k: 3
+  monitor: "val/accuracy"
+  mode: "max"

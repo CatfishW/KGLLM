@@ -1,0 +1,6 @@
+Starting from the head entity $e$, we perform a constrained Breadth-First Search (BFS). We construct the local subgraph and verify reachability. To prevent cycles, we track visited states and deduplicate based on relation sequences. During inference, we apply the predicted hop constraints determined by the classifier. Thus, the set of filtered candidates is:
+\begin{equation}
+    \mathcal{P}_{e}' = \{ p \in \textsc{BFS}(e) \mid H_{\min} \le H(p) \le H_{\text{pred}} \}
+    \label{eq:PePrime}
+\end{equation}
+In this definition, $\mathcal{P}_{e}'$ denotes the refined set of candidate paths retained for ranking. $\textsc{BFS}(e)$ represents the set of all paths discovered by expanding from the start entity $e$. The term $H(p)$ refers to the length (i.e., hop count) of a specific path $p$. The values $H_{\min}$ and $H_{\text{pred}}$ represent the lower and upper bounds of the permissible path length, respectively, as constrained by the predicted question type $\hat{t}$. This filtering step is critical; it decouples the extensive search space from the computationally expensive scoring phase.

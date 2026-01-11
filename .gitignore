@@ -139,3 +139,10 @@ Thumbs.db
 # Installers
 *.exe
 *.msixbundle
+
+# Large files to exclude from push
+*.onnx.data
+*.pdf
+Core/test_20251215.json
+Core/test_training_verification/vocab.json
+**/*results.json

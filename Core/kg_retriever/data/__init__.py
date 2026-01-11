@@ -1,2 +1,6 @@
 # Dataset module
-from .dataset import KGRetrieverDataset, KGRetrieverDataModule
+try:
+    from .dataset import KGRetrieverDataset, KGRetrieverDataModule
+except ImportError:
+    KGRetrieverDataset = None
+    KGRetrieverDataModule = None

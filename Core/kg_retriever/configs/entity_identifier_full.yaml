@@ -1,0 +1,63 @@
+# Entity Identifier Training Config - Full Data
+# Training with all CWQ + WebQSP + augmented data
+
+# Model architecture
+model:
+  encoder_name: "BAAI/bge-small-en-v1.5"
+  hidden_size: 384
+  embedding_size: 256
+  use_gliner: false  # Disabled for training speed
+  gliner_model: "urchade/gliner_medium-v2.1"
+  freeze_encoder: false
+  max_seq_length: 128
+
+# Training settings
+training:
+  learning_rate: 2.0e-5
+  warmup_steps: 1000
+  temperature: 0.05
+  batch_size: 64  # Larger batch for more in-batch negatives
+  max_epochs: 5
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 2
+  precision: "16-mixed"
+
+# Data settings - ALL available data
+data:
+  train_paths:
+    # WebQSP
+    - "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train_augmented.parquet"
+    # CWQ
+    - "/data/Yanlai/KGLLM/Data/CWQ/shortest_paths/train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train.parquet"
+    - "/data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train_augmented.parquet"
+    # LLM Rephrased
+    - "/data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/webqsp_rephrased_train.parquet"
+    - "/data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part1.parquet"
+    - "/data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part2.parquet"
+  
+  val_paths:
+    - "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet"
+    - "/data/Yanlai/KGLLM/Data/CWQ/shortest_paths/val.parquet"
+  
+  test_paths:
+    - "/data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet"
+    - "/data/Yanlai/KGLLM/Data/CWQ/shortest_paths/test.parquet"
+  
+  num_negatives: 7
+  num_workers: 4
+
+# Logging and checkpointing
+logging:
+  output_dir: "outputs_entity_identifier"
+  experiment_name: "entity_identifier_full"
+  log_every_n_steps: 100
+  val_check_interval: 0.25  # Validate 4x per epoch
+
+# Checkpoint settings
+checkpointing:
+  save_top_k: 3
+  monitor: "val/accuracy"
+  mode: "max"

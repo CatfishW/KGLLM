@@ -1,0 +1,123 @@
+General Scintillation for Gaussian Beam Propagating through Oceanic Turbulence and UWOC System Performance Evaluation
+
+theory, the numerical calculation of SI for plane and spherical waves were performed [16]. The results showed that
+Nikishov’s power spectrum model obviously underestimated
+the SI values. However, Yi’s power spectrum model was
+only applicable for fixed Prandtl/Schmidt numbers, and its
+complicated mathematical form made it difficult to obtain
+a closed expression of SI. In this context, a wide range
+of Prandtl/Schmidt number power spectrum model with a
+compact mathematical form was proposed by analytically
+solving Hill Model 4, the SI of spherical wave was also
+derived [17]. Subsequently, the power spectrum model in
+[17] was extended to a more general model, namely, the
+general OTOPS, whose parameters were correlated with the
+temperature, salinity of seawater and fluid dynamics parameters, further enhancing the practicability of this spectrum
+[18].
+Using the above-mentioned general OTOPS [18], the SI
+expressions of various optical beams were derived and the
+associated UWOC performance analysis were also carried
+out. The Rytov variances of plane and spherical waves were
+derived in [19] under weak turbulence conditions. The SI
+for these infinite optical waves in moderate-to-strong oceanic
+turbulence were derived by means of extended Rytov theory
+[20]. The obtained SI was used to investigate the BER performance of UWOC [20]. For limited communication distances
+and finite transceiver aperture, it is more meaningful to study
+the SI of bounded beam such as Gaussian beam for the
+design of actual UWOC system. However, the complicated
+mathematically form of the general OTOPS and Gaussian
+beam make it difficult to get a tractable expression. Recently,
+several studies have been performed to obtain computable
+expressions through some approximations, simplifications
+and assumptions. The approximate expression of the Rytov
+variance was derived for the point receiving by assuming
+Kolmogorov microscale tends to zero [21]. Besides this
+assumption it was used eliminating one positive and one
+negative components in the derivation, which simplified the
+mathematical process, but leading to less accuracy. Following the similar procedure, the approximate SI was obtained
+for a finite receiving aperture [22]. A simplified expression
+of SI for Gaussian beam was derived with a certain degree
+of approximation [23]. Although the expression contains
+Kolmogorov microscale parameter, its results were just efficient for short-to-medium distances and specific range of
+receiving aperture. To sum up, there has not been a general
+and exact expression for the SI of Gaussian beam in oceanic
+turbulence, to the best of our knowledge.
+Motivated by this, we derive a general and exact closedform analytical expression for the SI of Gaussian beam by
+employing the general OTOPS and the Rytov approach.
+Our results not only include the previous results in [19, 21]
+as special cases, but also extend to general case that Kolmogorov microscale is non-zero, considering impacts of all
+oceanic turbulence parameters. The accuracy of our derivation is also verified by the comparison with existing approximate results. In addition, using temperature and salinity
+data from Argo buoy deployed in real oceans, we investigate
+Yuxuan Li et al: Preprint submitted to Elsevier
+
+the depth dependence of SI in the vertical direction. We
+further use the derived SI to evaluate the BER performance
+of UWOC system under weak oceanic turbulence.
+The rest of this paper is organized as follows. The expression of general on-axis scintillation index for Gaussian
+beam is derived in Section 2. The analytical derivation of
+BER performance is illustrated in Section 3. The numerical
+results and related analysis are presented in Section 4 and
+the conclusions about our works are drawn in Section 5.
+
+2. General on-axis Scintillation Index of
+Gaussian Beam
+2.1. General OTOPS Model
+The general OTOPS model can be expressed as [18]
+Φ𝑛 (𝜅, ⟨𝑇 ⟩ , ⟨𝑆⟩ , 𝜆) = 𝐴2 Φ𝑇 (𝜅)+𝐵 2 Φ𝑆 (𝜅)+2𝐴𝐵Φ𝑇 𝑆 (𝜅)
+(1)
+where 𝜅 is the spatial frequency, 𝐴 and 𝐵 are linear coefficients related to the average temperature ⟨𝑇 ⟩, average
+salinity concentration ⟨𝑆⟩ and the wavelength 𝜆. They are
+defined as
+𝜕𝑛 (⟨𝑇 ⟩ , ⟨𝑆⟩ , 𝜆)
+𝜕𝑛 (⟨𝑇 ⟩ , ⟨𝑆⟩ , 𝜆)
+,𝐵 = 0
+(2)
+𝐴= 0
+𝜕 ⟨𝑇 ⟩
+𝜕 ⟨𝑆⟩
+where the average refractive index 𝑛0 (⟨𝑇 ⟩ , ⟨𝑆⟩ , 𝜆) can be
+calculated as [18]
+𝑛0 (⟨𝑇 ⟩ , ⟨𝑆⟩ , 𝜆) = 𝑎0 + (𝑎1 + 𝑎2 ⟨𝑇 ⟩ + 𝑎3 ⟨𝑇 ⟩2 ) ⟨𝑆⟩
++ 𝑎4 ⟨𝑇 ⟩2 + (𝑎5 + 𝑎6 ⟨𝑆⟩ + 𝑎7 ⟨𝑇 ⟩)𝜆−1 + 𝑎8 𝜆−2 + 𝑎9 𝜆−3
+(3)
+where 𝑎0 = 1.31405, 𝑎1 = 1.779 × 10−4 , 𝑎2 = −1.05 × 10−6 ,
+𝑎3 = 1.6 × 10−8 , 𝑎4 = −2.02 × 10−6 , 𝑎5 = 15.868,
+𝑎6 = 0.01155, 𝑎7 = −0.00423, 𝑎8 = −4382 and 𝑎9 =
+1.1455 × 106 .
+Each component in Eq. (1) is given by
+𝛽0 −1∕3 −11∕3
+𝜀
+𝜅
+𝜒𝑖 [1 + Δ1,𝑖 𝜅 0.61 − Δ2,𝑖 𝜅 0.55 ]
+4𝜋
+(4)
+2
+× exp(−Δ3,𝑖 𝜅 ), 𝑖 ∈ {𝑇 , 𝑆, 𝑇 𝑆}
+
+Φ𝑖 (𝜅) =
+
+where 𝛽0 = 0.72 is the Obukhov-Corrsin constant and 𝜀
+is the energy dissipation rate that ranges from 10−10 to
+10−1 m2 s−3 . 𝜒𝑇 is the average temperature dissipation rate
+and ranges from 10−10 to 10−4 K 2 s−1 , 𝜒𝑆 = 𝑑𝑟 𝐻 −2 𝜒𝑇 and
+𝜒𝑇 𝑆 = 0.5(1 + 𝑑𝑟 )𝐻 −1 𝜒𝑇 . 𝑑𝑟 is the eddy diffusivity ratio,
+and 𝐻 is the temperature-salinity gradient ratio. Detailed
+description of these parameters is shown in [18].
+For the sake of mathematical simplicity, some notations are indicated as Δ1,𝑖 = 21.61𝜂 0.61 𝑐𝑖0.02 , Δ2,𝑖 =
+18.18𝜂 0.55 𝑐𝑖0.04 , and Δ3,𝑖 = 174.90𝜂 2 𝑐𝑖0.96 , where 𝜂 is
+the Kolmogorov microscale (subsequently simplify to “microscale”), 𝑐𝑖 are the non-dimensional parameters defined as
+⎧ 𝑐𝑇 = 0.0724∕3 𝛽0 Pr −1
+⎪
+−1
+4∕3
+⎨ 𝑐𝑆 = 0.072 𝛽0 Sc
+⎪
+4∕3
+−1 −1
+⎩𝑐𝑇 𝑆 = 0.072 𝛽0 (Pr + Sc)Pr Sc
+
+(5)
+
+Page 2 of 10
+
+

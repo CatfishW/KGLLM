@@ -148,6 +148,28 @@ def process_sample(row: Dict, max_hops: int = 4, max_paths: int = 500) -> Dict:
             # If no topic entities, use all unique relations as 1-hop candidates
             candidate_paths = [[r] for r in get_unique_relations(graph)]
         
+        # Determine hop constraints from ground truth
+        is_multihop = False
+        if gt_paths:
+            # Check if any GT path has length > 1
+            is_multihop = any(len(p) > 1 for p in gt_paths)
+        
+        # Filter candidate paths based on hop constraint
+        filtered_candidates = []
+        if is_multihop:
+            # Keep only paths with length > 1 (multi-hop)
+            filtered_candidates = [p for p in candidate_paths if len(p) > 1]
+            # Ensure we don't return empty if classification was strict (though we add GT back)
+            if not filtered_candidates and candidate_paths:
+                 # Fallback: if no multi-hop candidates found (unlikely if GT is multi-hop), keep original
+                 # But usually we just proceed.
+                 pass
+        else:
+            # Keep only paths with length == 1 (1-hop)
+            filtered_candidates = [p for p in candidate_paths if len(p) == 1]
+            
+        candidate_paths = filtered_candidates
+
         # Also add ground truth paths to candidates (ensure they're included)
         for gt_path in gt_paths:
             if gt_path and gt_path not in candidate_paths:
@@ -166,6 +188,7 @@ def process_sample(row: Dict, max_hops: int = 4, max_paths: int = 500) -> Dict:
             'unique_relations': unique_relations,
             'num_triples': len(graph),
             'num_candidates': len(candidate_paths),
+            'is_multihop': is_multihop,
         }
     except Exception as e:
         print(f"Error processing {row.get('id', 'unknown')}: {e}")

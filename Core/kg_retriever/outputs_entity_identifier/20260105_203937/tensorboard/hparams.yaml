@@ -1,0 +1,31 @@
+encoder_name: BAAI/bge-small-en-v1.5
+hidden_size: 384
+embedding_size: 256
+use_gliner: false
+gliner_model: urchade/gliner_medium-v2.1
+entity_index_path: null
+freeze_encoder: false
+learning_rate: 2.0e-05
+warmup_steps: 1000
+temperature: 0.05
+max_seq_length: 128
+train_path:
+- /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/train.parquet
+- /data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train.parquet
+- /data/Yanlai/KGLLM/Data/preprocessed_paths/webqsp_train_augmented.parquet
+- /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/train.parquet
+- /data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train.parquet
+- /data/Yanlai/KGLLM/Data/preprocessed_paths/cwq_train_augmented.parquet
+- /data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/webqsp_rephrased_train.parquet
+- /data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part1.parquet
+- /data/Yanlai/KGLLM/Data/LLM_Rephrased_CWQ_WebQSP/cwq_rephrased_train_part2.parquet
+val_path:
+- /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/val.parquet
+- /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/val.parquet
+test_path:
+- /data/Yanlai/KGLLM/Data/webqsp_final/shortest_paths/test.parquet
+- /data/Yanlai/KGLLM/Data/CWQ/shortest_paths/test.parquet
+tokenizer_name: BAAI/bge-small-en-v1.5
+num_negatives: 7
+batch_size: 64
+num_workers: 4

@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Late Interaction Matrix | KGLLM</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --text-main: #c9d1d9;
+            --text-dim: #8b949e;
+            --accent: #58a6ff;
+            --high-sim: #238636;
+            --mid-sim: #1f6feb;
+            --low-sim: #30363d;
+            --font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: var(--font-family);
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            border: 1px solid #30363d;
+            max-width: 95vw;
+            overflow-x: auto;
+        }
+
+        h1 {
+            font-size: 1.5rem;
+            margin-bottom: 5px;
+            color: var(--accent);
+        }
+
+        .subtitle {
+            color: var(--text-dim);
+            margin-bottom: 25px;
+            font-size: 0.9rem;
+        }
+
+        .matrix-wrapper {
+            position: relative;
+            margin-top: 40px;
+        }
+
+        table {
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        th, td {
+            width: 45px;
+            height: 45px;
+            text-align: center;
+            border: 1px solid #30363d;
+            position: relative;
+            transition: transform 0.2s ease, z-index 0.2s;
+        }
+
+        th {
+            background: #21262d;
+            font-weight: 500;
+            color: var(--text-dim);
+        }
+
+        .row-header {
+            width: 80px;
+            text-align: right;
+            padding-right: 15px;
+            white-space: nowrap;
+        }
+
+        .col-header {
+            height: 80px;
+            vertical-align: bottom;
+            padding-bottom: 10px;
+        }
+
+        .col-header .text {
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+        }
+
+        .cell {
+            cursor: pointer;
+            font-weight: 600;
+        }
+
+        .cell:hover {
+            transform: scale(1.2);
+            z-index: 10;
+            box-shadow: 0 0 15px rgba(255,255,255,0.2);
+            border: 1px solid #fff;
+        }
+
+        .max-sim-cell {
+            outline: 2px solid var(--accent);
+            outline-offset: -2px;
+            background-color: rgba(88, 166, 255, 0.1);
+        }
+
+        .sim-90 { background-color: #2ea043; color: #fff; }
+        .sim-80 { background-color: #238636; color: #fff; }
+        .sim-70 { background-color: #1f6feb; color: #fff; }
+        .sim-60 { background-color: #1158c7; color: #fff; }
+        .sim-50 { background-color: #0d419d; color: #c9d1d9; }
+        .sim-40 { background-color: #30363d; color: #8b949e; }
+        .sim-30 { background-color: #21262d; color: #8b949e; }
+        .sim-20 { background-color: #161b22; color: #8b949e; }
+        .sim-10 { background-color: #0d1117; color: #484f58; }
+
+        .legend {
+            display: flex;
+            gap: 15px;
+            margin-top: 30px;
+            font-size: 0.8rem;
+            color: var(--text-dim);
+            align-items: center;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .legend-box {
+            width: 15px;
+            height: 15px;
+            border-radius: 3px;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: #f0f6fc;
+            color: #010409;
+            padding: 5px 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+            z-index: 100;
+            white-space: nowrap;
+        }
+
+        .stats {
+            margin-top: 20px;
+            border-top: 1px solid #30363d;
+            padding-top: 15px;
+            width: 100%;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .stat-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--accent);
+        }
+
+        .stat-label {
+            font-size: 0.7rem;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>MaxSim Interaction Matrix</h1>
+        <div class="subtitle">Question vs. Path Token Alignment (WebQTest-415 Example)</div>
+
+        <div class="matrix-wrapper" id="matrixContainer">
+            <!-- Table will be injected here -->
+        </div>
+
+        <div class="legend">
+            <span>Similarity Rank:</span>
+            <div class="legend-item"><div class="legend-box sim-90"></div> 0.9+</div>
+            <div class="legend-item"><div class="legend-box sim-70"></div> 0.7+</div>
+            <div class="legend-item"><div class="legend-box sim-50"></div> 0.5+</div>
+            <div class="legend-item"><div class="legend-box sim-30"></div> 0.3+</div>
+            <div class="legend-item"><div class="legend-box sim-10"></div> <0.2</div>
+            <div style="margin-left: 20px; display: flex; align-items: center; gap: 8px;">
+                <div style="width: 15px; height: 15px; outline: 2px solid var(--accent);"></div> MaxSim Selection
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-item">
+                <div class="stat-label">Aggregated Score</div>
+                <div class="stat-value" id="totalScore">0.00</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Query Length</div>
+                <div class="stat-value" id="qLen">0</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Path Length</div>
+                <div class="stat-value" id="pLen">0</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const qTokens = ['What', 'movie', 'with', 'film', 'character', 'named', 'Mr', '.', 'Woodson', 'did', 'Tupac', 'star', 'in', '?'];
+        const pTokens = ['film', '.', 'film', '_', 'character', '.', 'portrayed', '_', 'in', '_', 'films', 'film', '.', 'performance', '.', 'film'];
+
+        // Define semantic relationships for plausible scoring
+        const semanticMap = {
+            'movie': {'film': 0.92, 'films': 0.88, 'performance': 0.65},
+            'film': {'film': 0.98, 'films': 0.94, 'performance': 0.60},
+            'character': {'character': 0.96, 'portrayed': 0.70, 'performance': 0.55},
+            'star': {'portrayed': 0.85, 'performance': 0.80, 'film': 0.35},
+            'named': {'_': 0.40, '.': 0.15},
+            'Mr': {'Woodson': 0.25}, // Contextual
+            'Woodson': {'Woodson': 0.99}, // Entity overlap (hypothetical path embedding)
+            'in': {'in': 0.95, '_in': 0.90},
+            '.': {'.': 0.98, '_': 0.45},
+            '?': {'.': 0.1}
+        };
+
+        function getSim(q, p) {
+            if (q.toLowerCase() === p.toLowerCase()) return 0.95 + Math.random() * 0.04;
+            
+            const qClean = q.toLowerCase();
+            const pClean = p.toLowerCase();
+            
+            if (semanticMap[qClean] && semanticMap[qClean][pClean]) {
+                return semanticMap[qClean][pClean];
+            }
+            
+            // Random background noise for illustration
+            return 0.05 + Math.random() * 0.25;
+        }
+
+        function renderMatrix() {
+            const container = document.getElementById('matrixContainer');
+            const table = document.createElement('table');
+
+            // Header Row
+            const headerRow = document.createElement('tr');
+            headerRow.appendChild(document.createElement('th')); // Corner
+            pTokens.forEach(p => {
+                const th = document.createElement('th');
+                th.className = 'col-header';
+                const span = document.createElement('span');
+                span.className = 'text';
+                span.textContent = p;
+                th.appendChild(span);
+                headerRow.appendChild(th);
+            });
+            table.appendChild(headerRow);
+
+            let totalMaxSim = 0;
+
+            // Data Rows
+            qTokens.forEach((q, qIdx) => {
+                const row = document.createElement('tr');
+                const th = document.createElement('th');
+                th.className = 'row-header';
+                th.textContent = q;
+                row.appendChild(th);
+
+                let maxSimVal = -1;
+                let maxSimIdx = -1;
+                const rowScores = [];
+
+                pTokens.forEach((p, pIdx) => {
+                    const score = getSim(q, p);
+                    rowScores.push(score);
+                    if (score > maxSimVal) {
+                        maxSimVal = score;
+                        maxSimIdx = pIdx;
+                    }
+                });
+
+                totalMaxSim += maxSimVal;
+
+                rowScores.forEach((score, pIdx) => {
+                    const td = document.createElement('td');
+                    td.className = 'cell';
+                    if (pIdx === maxSimIdx) td.classList.add('max-sim-cell');
+                    
+                    const level = Math.floor(score * 10) * 10;
+                    td.classList.add(`sim-${level || 10}`);
+                    
+                    td.textContent = score.toFixed(2);
+                    row.appendChild(td);
+                });
+
+                table.appendChild(row);
+            });
+
+            container.appendChild(table);
+            document.getElementById('totalScore').textContent = totalMaxSim.toFixed(2);
+            document.getElementById('qLen').textContent = qTokens.length;
+            document.getElementById('pLen').textContent = pTokens.length;
+        }
+
+        renderMatrix();
+    </script>
+</body>
+</html>

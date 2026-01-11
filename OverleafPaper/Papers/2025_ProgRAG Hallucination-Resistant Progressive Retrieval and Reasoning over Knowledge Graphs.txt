@@ -1,0 +1,369 @@
+ProgRAG: Hallucination-Resistant Progressive Retrieval and Reasoning over
+Knowledge Graphs
+Minbae Park* 1 , Hyemin Yang* 2 , Jeonghyun Kim2 , Kunsoo Park3 , Hyunjoon Kim†1,2
+1
+
+arXiv:2511.10240v2 [cs.AI] 9 Dec 2025
+
+Department of Artificial Intelligence, Hanyang University, South Korea
+2
+Department of Data Science, Hanyang University, South Korea
+3
+Department of Computer Science and Engineering, Seoul National University, South Korea
+{pmb0323, hmym7308, gemma1126, hyunjoonkim}@hanyang.ac.kr; kpark@thoery.snu.ac.kr
+Abstract
+Large Language Models (LLMs) demonstrate strong reasoning capabilities but struggle with hallucinations and limited
+transparency. Recently, KG-enhanced LLMs that integrate
+knowledge graphs (KGs) have been shown to improve reasoning performance, particularly for complex, knowledgeintensive tasks. However, these methods still face significant
+challenges, including inaccurate retrieval and reasoning failures, often exacerbated by long input contexts that obscure
+relevant information or by context constructions that struggle
+to capture the richer logical directions required by different
+question types. Furthermore, many of these approaches rely
+on LLMs to directly retrieve evidence from KGs, and to selfassess the sufficiency of this evidence, which often results in
+premature or incorrect reasoning. To address the retrieval and
+reasoning failures, we propose ProgRAG, a multi-hop knowledge graph question answering (KGQA) framework that decomposes complex questions into sub-questions, and progressively extends partial reasoning paths by answering each subquestion. At each step, external retrievers gather candidate evidence, which is then refined through uncertainty-aware pruning by the LLM. Finally, the context for LLM reasoning is optimized by organizing and rearranging the partial reasoning
+paths obtained from the sub-question answers. Experiments
+on three well-known datasets demonstrate that ProgRAG outperforms existing baselines in multi-hop KGQA, offering improved reliability and reasoning quality.
+
+Code — https://github.com/hyemin-yang/ProgRAG
+
+Introduction
+Since the emergence of large language models (LLMs) like
+ChatGPT, their remarkable reasoning abilities have demonstrated impressive performance in natural language processing tasks, particularly in question answering (Wei et al.
+2022; Brown et al. 2020; Wang et al. 2022; Besta et al. 2024;
+Yao et al. 2023). However, challenges such as hallucinations
+and limited performance on complex, knowledge-intensive
+tasks still persist (Ji et al. 2023). These limitations have
+fueled growing interest in incorporating external structured
+* These authors contributed equally.
+†
+
+Corresponding author.
+Copyright © 2026, Association for the Advancement of Artificial
+Intelligence (www.aaai.org). All rights reserved.
+
+Figure 1: Comparison between existing KG-enhanced
+LLMs and the proposed framework. E, I, and C denote
+External, Internal, and Core Supporting Evidences, respectively, and UQ in (b) indicates uncertainty quantification.
+
+knowledge sources, especially knowledge graphs (KGs), to
+enhance the reliability and accuracy of LLMs.
+Recent advancements have led to the development of KGenhanced LLMs (Pan et al. 2024), which integrate KGs
+in either the fine-tuning or inference phases. Despite these
+improvements, LLM fine-tuning methods (Mavromatis and
+Karypis 2024; Luo et al. 2023b,a) often require substantial computational resources and struggle to generalize effectively to unseen knowledge. A complementary line of
+methods using KGs only in the inference phase, i.e., KGenhanced LLM inference methods, can be broadly categorized into two approaches in terms of retrieval, as illustrated
+in Figure 1(a): (1) LLM-as-retriever approach in which the
+LLM itself guides the retrieval process by leveraging its internal knowledge (corresponding to region I in the figure),
+and (2) external retriever-based approach in which an external retriever extracts relevant reasoning paths or subgraphs
+(corresponding to region E). Each approach relies on different sources of knowledge, i.e., internal or external, to retrieve supporting evidence for reasoning.
+However, both approaches still face fundamental limitations. First, they often fail to retrieve accurate evidence. Second, even when correct supporting evidence is retrieved, the
+LLM frequently generates an incorrect answer. In Figure 2,
+
+we analyze representative failure cases on the CWQ dataset
+for LLM-as-retriever methods like ToG (Sun et al. 2023)
+and PoG (Chen et al. 2024), and the external retriever-based
+method SubgraphRAG (Li, Miao, and Li 2024). We define
+retrieval error as cases where the retrieved reasoning path or
+subgraph does not contain the answer entity, and reasoning
+error as cases where the answer is included in the retrieved
+evidence but the LLM fails to generate the correct answer.
+ToG and PoG exhibit high rates of both retrieval and reasoning errors.
+In contrast, SubgraphRAG extracts the top-100 questionrelevant triples from the KG, thereby reducing retrieval error. Nonetheless, it still suffers from significant reasoning
+errors. These results can be attributed to four key factors:
+1. Relying solely on the LLM to navigate the extensive
+search space of KGs is inherently ineffective, resulting
+in substantial retrieval errors.
+2. The self-assessment used by LLM-as-retriever methods
+is prone to hallucination, often resulting in either premature termination or unnecessary continuation of the reasoning process.
+3. Excessively long input contexts from numerous retrieved
+triples or paths dilutes relevant evidence and hinders answer identification (Liu et al. 2023). This affects SubgraphRAG, ToG, and PoG alike.
+4. Existing KG-enhanced LLMs have limited ability to handle richer logical structures beyond simple linear hops
+(Zhu et al. 2025), leading to suboptimal contexts for
+LLM reasoning, as later validated through our experiments.
+To address the challenges of retrieval and reasoning errors particularly those arising from the hallucinatory behavior of LLMs, we propose a progressive retrieval and
+reasoning framework, ProgRAG, as illustrated in Figure
+1(b): (i) we decompose a complex question into sequential sub-questions, and answer each one iteratively, thereby
+progressively extending reasoning paths. For this, we treat
+the number of sub-questions as the exploration depth of its
+complete reasoning path, adapting it to balance sufficient
+reasoning with avoidance of over-exploration; (ii) for each
+sub-question, our external retrievers produces relevant evidence supporting the answer for that sub-question from the
+KG, which is then filtered by the LLM to improve precision. This retrieval-and-pruning process narrows the search
+space, allowing the LLM to focus on a more relevant candidate set. Moreover, we adaptively increase reliance on external knowledge when the uncertainty of the LLM’s predictions is high; (iii) to reduce hallucination during reasoning, we refine and enhance the LLM’s input context using
+effective prompting techniques such as prefix enumeration
+and repacking, which structure the input to better emphasize relevant evidence, thereby improving the model’s ability to generate accurate and grounded answers. We evaluate
+ProgRAG on three KGQA benchmarks—WebQSP, CWQ,
+and CR-LT—and observe state-of-the-art performance on all
+datasets. ProgRAG outperforms the best baseline by 3.3%
+on WebQSP, 4.9% on CWQ, and 10.9% on CR-LT in accuracy.
+
+Figure 2: Comparison of typical error cases in existing methods versus the proposed framework.
+
+• We propose ProgRAG, a novel progressive retrieval and
+reasoning framework for multi-hop KGQA that iterates
+external retrieval and LLM-based pruning to address
+both retrieval and reasoning errors.
+• We first propose to refine the LLM context with various
+reasoning paths, enabling ProgRAG to adaptively handle
+different question types, improving the robustness and
+generalization of reasoning.
+• We conduct comprehensive experiments on three multihop KGQA datasets, demonstrating that ProgRAG
+achieves state-of-the-art performance even with smaller
+LLMs, e.g., Gemma2-9B-it, GPT-4o-mini, without finetuning.
+
+Related Work
+Most KG-enhanced LLMs can be categorized into two approaches based on how LLMs are utilized. Several methods (Mavromatis and Karypis 2024; Long et al. 2025; Luo
+et al. 2024, 2023a; Xu et al. 2025; Luo et al. 2023b; Liu
+et al. 2025a; Ao et al. 2025) incorporate KGs during the finetuning of LLMs.
+However, these approaches often generalize poorly to unseen knowledge and incur significant computational cost
+(Baek, Aji, and Saffari 2023; Axelsson and Skantze 2023;
+He et al. 2024). An alternative line of work retrieves structured evidence from KGs and feeds it into LLMs for reasoning without fine-tuning, using either LLM-internal knowledge or external retrievers.
+LLM-as-retriever methods rely on the LLMs to directly
+explore the KG and iteratively accumulate requisite information. StructGPT (Jiang et al. 2023a) generates executable
+SQL queries to extract relevant KG evidence. ToG (Sun et al.
+2023) explores multiple reasoning paths within a predefined
+exploration breadth by retrieving query-relevant relations,
+followed by the corresponding entities. PoG (Chen et al.
+2024) decomposes the question into sub-tasks and prompts
+all sub-tasks, along with the question, to the LLM to guide
+answer prediction. Building on ToG’s framework, ReKnoS
+(Wang et al. 2025) and MFC (Zhang et al. 2025) further extend the search space using super-relations or meta-entities.
+However, due to unfiltered exploration, these methods often
+
+retrieve suboptimal paths and exhibit hallucination tendencies (Liu et al. 2023; Dhole 2025).
+External retriever-based methods adopt a pipeline in
+which fine-tuned external retrieval models efficiently extract
+relevant subgraphs or reasoning paths from the KG (Jiang
+et al. 2022, 2023b; Liu et al. 2024). SubgraphRAG (Li,
+Miao, and Li 2024) integrates a lightweight MLP with a parallel triple-scoring mechanism for subgraph retrieval. KGCoT (Zhao et al. 2024) explores KG stepwise from question
+entities, generates reasoning paths via transition matrices,
+However, these methods either retrieve excessive structural
+information or fail to leverage LLMs’ internal knowledge
+during retrieval, resulting in low reasoning accuracy due to
+both irrelevant volume and insufficient precision.
+
+Preliminaries
+Knowledge Graph (KG). A knowledge graph is a set of
+factual triples, denoted by G = {(e, r, e′ )|e, e′ ∈ E, r ∈
+R}, where E is a set of entities and R is a set of relations.
+Each triple (e, r, e′ ) represents a fact indicating that the head
+entity e is connected to the tail entity e′ via relation r.
+Knowledge Graph Question Answering (KGQA). Given
+a natural language question q, a knowledge graph G, and
+a set of key entities Eq ⊆ E extracted from q, the goal of
+KGQA is to predict the set Aq ⊆ E of answers to the question q by performing reasoning over G.
+Reasoning Path. A reasoning path is a sequence of consecutive triples in a KG, denoted as (e0 , r1 , e1 ) → (e1 , r2 , e2 ) →
+... → (ed−1 , rd , ed ), where each triple (ei−1 , ri , ei ) ∈ G.
+This sequence forms the reasoning trajectory from a key entity e0 toward predicting the answer entity ed . A prefix of a
+reasoning path is a subsequence of consecutive triples taken
+from the beginning of the path. It consists of the first k triples
+of the full reasoning path where k ≤ d.
+
+Method
+Overview
+Figure 3 illustrates the ProgRAG framework, which performs three stages. First, ProgRAG identifies key entities
+from a given question, and initializes a partial reasoning
+path as each key entity, and decomposes the question into
+multiple sub-questions in the question decomposition stage.
+Second, in the sub-question answering stage, ProgRAG iteratively answers each sub-question by extending the partial reasoning paths obtained from the previous iteration. Finally, in the prefix enumeration and repacking stage, ProgRAG reorganizes all complete reasoning paths and their
+partial reasoning paths to form a structured context. The
+LLM then infers the final answer based on this context.
+
+Question Decomposition
+In this stage, ProgRAG decomposes a question into simpler sub-questions. Specifically, we first identify key entities, i.e., the entities central to the semantics of the question.
+The LLM decomposes the question into sub-questions and
+associates each one with its corresponding key entity, which
+is called key entity mapping. For every key entity es , the
+LLM further decomposes its initial sub-question into more
+
+granular ones if possible; retains this sub-question as atomic
+otherwise. The full prompt is provided in Appendix K. Consequently, we obtain a chain Qes = {q1 , ..., qd } of subquestions for every key entity es , where the depth d represents the number of reasoning steps, i.e., iterations, in the
+subsequent stage. In this manner, ProgRAG can dynamically
+adjust the exploration depth depending on the question complexity, enabling more flexible and precise reasoning. Previous work such as Chain-of-Question (Yixing et al. 2024)
+also decomposes a complex question. Unlike our method,
+this decomposition does not take key entities into account.
+
+Sub-question Answering
+For simplicity, we focus on a question with a single key entity, but our method can be easily extended to a question with
+multiple key entities. From the key entity and its chain of
+sub-questions, the sub-question answering stage iteratively
+finds the answer to each sub-question by extending the partial reasoning paths one hop at a time. At the first iteration,
+the source entity for each sub-question is the key entity; in
+subsequent iterations, the source entity is the answer entity
+from the previous iteration. At each iteration i, ProgRAG
+takes the source entity and sub-question qi as input, and
+performs four procedures: (1) relation retrieval, (2) relation
+pruning, (3) triple retrieval, and (4) triple pruning, as shown
+in Figure 31 .
+Relation Retrieval Seminal prior work in KGQA struggles with retrieving relevant relations from the KG, despite
+its significant impact on question answering quality. On the
+one hand, some methods pass a large number of relations
+linked to the final entities of partial reasoning paths to the
+LLM (Sun et al. 2023), leading to context overload. On the
+other hand, other methods retrieve relevant relations from
+the entire KG (Zhao et al. 2024), often neglecting the local
+context needed for step-wise reasoning.
+For progressive relation retrieval, we select candidate relations Rre (qi ) from the KG that are contextually relevant
+to a given sub-question qi . To address the aforementioned
+limitations, we utilize a SentenceBERT-based cross-encoder
+(Reimers and Gurevych 2019, 2020) to score and rank onehop triples (si , r, e′ ) ∈ G connected to the source entity si
+based on their semantic relevance to qi . The top-m unique
+relations with the highest scores are selected as Rre (qi ).
+Relation Pruning For source entity si , sub-question qi ,
+and Rre (qi ), the LLM selects the top-n (n ≤ m) relevant
+relations Rpr (qi ) ⊆ Rre (qi ). All relations in Rre (qi ) are
+sorted in descending order of their semantic similarity to
+qi in this prompt. To encourage the LLM to articulate its
+step-by-step reasoning, we apply Chain-of-Thought prompting (CoT) (Wei et al. 2022) leveraging our key observations on the Freebase KG widely used in this study: this
+KG organizes each relation into a three-level hierarchy, i.e.,
+domain.source type.target type. This hierarchy captures the
+semantic structure of the relation and its alignment with the
+1
+
+For questions with multiple key entities, their corresponding
+sub-question chains are solved independently, and the resulting reasoning paths are fed into the next stage.
+
+Figure 3: ProgRAG operates in three stages: (1) Question decomposition, where the question is split into sub-questions based
+on a key entity; (2) Sub-question answering, where partial reasoning paths are progressively extended through retrieval and
+pruning; and (3) Prefix enumeration and repacking, where all prefixes of the reasoning paths are enumerated and reordered.
+Finally, the LLM infers the answer based on these prefixes.
+associated triple, e.g., the relation of the triple (“Lou Seal”,
+“sports.mascot.team”, “San Francisco Giants”) consists of
+domain sports, source type mascot, and target type team.
+Using CoT, the LLM infers three elements step by step:
+(1) the type of source (e.g., mascot), (2) the target type (e.g.,
+team), and (3) a relational phrase that links them semantically (e.g., “mascot for”). We observe that each sub-question
+typically corresponds to a single-hop triple, making the stepby-step reasoning process highly compatible with the question decomposition.
+In contrast to the prior work (Sun et al. 2023) where the
+LLM directly evaluates the relevance of all retrieved relations to the question without the structure-aware step-bystep reasoning, we leverage hierarchical relation structure to
+enable the LLM to identify the relevant relations through
+reasoning. This process enhances interpretability and consistency.2 The full prompt is provided in Appendix K.
+Triple Retrieval As noted earlier, excessively long contexts can impair the focus of LLM on relevant information,
+increasing the risk of hallucinations and retrieval errors (Liu
+et al. 2023, 2025b). To construct a more compact context, we
+prune unpromising candidate triples unlikely to lead to the
+2
+Although this prompt is designed for hierarchical relations, it
+also performs effectively on CR-LT, a Wikidata-based dataset without hierarchical relation structure, where we observe consistently
+strong performance.
+
+answer for qi based on their relevance to qi . The set Tqi of
+candidate triples consists of all triples that include the source
+entity si and any relation in Rpr (qi ). The relevance score
+between a triple and qi is computed by summing two components: (1) the textual semantic-based triple score, and (2)
+the structure-based entity score.
+Textual Semantic-based Triple Scoring We employ a biencoder architecture composed of two MPNet-base models (Song et al. 2020), each generating embeddings for qi
+and for every t ∈ Tqi , respectively. The textual semanticbased triple score Φt is computed by applying a softmax to
+the cosine similarity between the sub-question embedding
+xqi and the triple embedding xt , capturing their textual semantic relevance:
+Φt (qi ) = softmax({cos(xqi , xt )}t∈Tqi )
+
+(1)
+
+The encoders are fine-tuned using the InfoNCE (Oord, Li,
+and Vinyals 2018) loss to learn semantic alignment between
+sub-questions and their corresponding golden triples.
+Structure-based Entity Scoring In KGs, relations carry
+rich contextual information, making relation-centric approaches crucial for reasoning tasks (Wang, Ren, and
+Leskovec 2021). To leverage this, we employ a querydependent graph neural network (GNN) (Luo et al. 2025),
+which is designed to focus on the semantic relevance of relations in the context of specific queries. We embed all re-
+
+lations in the graph and the sub-question qi using the pretrained text encoder (Li et al. 2023). Each entity is initialized
+with a zero vector, with the exception of the source entity si ,
+which is assigned the sub-question embedding.
+After passing through all GNN layers, we obtain the final
+representation for each entity in the graph. Let Eqi be the set
+of all tail entities in Tqi . The representations of all entities in
+Eqi are concatenated and passed through an MLP followed
+by a softmax function, producing a probability that each e ∈
+Eqi is the answer entity for qi :
+
+triple retriever. Finally, the reordered prefixes and the question q are fed into the LLM, guiding it to focus on the most
+relevant evidence and improving the accuracy of its answer.
+By carefully manipulating partial reasoning paths, the LLM
+reasons from prefixes that capture intermediate states, better
+aligning even partial paths with the nuanced semantics of the
+question, particularly when answers lie in the middle of reasoning paths or when multiple constraints must be satisfied.
+
+Φe (qi ) = softmax(MLP(concat({he }e∈Eqi )))
+
+To demonstrate the effectiveness and efficiency of ProgRAG on multi-hop KGQA, we conduct comprehensive experiments to address four research questions; (RQ1) How
+effective is ProgRAG in the multi-hop reasoning for the
+KGQA task?; (RQ2) How does each component in ProgRAG contribute to the overall performance?; (RQ3) How
+accurately does ProgRAG retrieve ground-truth reasoning
+paths?; (RQ4) How efficiently does ProgRAG perform
+multi-hop reasoning?
+
+(2)
+
+For each t ∈ Tqi , we compute the probability ut that triple t
+is the answer triple for qi :
+ut = softmax(Φt (qi ) + Φe (qi ))
+
+(3)
+
+The above two components offer complementary perspectives, i.e., semantic relevance and structural context, enhancing both the accuracy of triple ranking. Finally, top-p sampling (Holtzman et al. 2019) is applied over the probabilities ut , sequentially selecting triples in descending order of
+probability until the cumulative score exceeds a predefined
+threshold p.
+Triple Pruning For the sub-question qi , let Tre (qi ) denote the set of triples remaining after top-p sampling. From
+Tre (qi ), we aim to obtain answer triples, with the source entity si as the head and the predicted answer to qi as the tail.
+Specifically, all triples t ∈ Tre (qi ) are sorted in descending order of ut and provided to the LLM along with qi .3
+ProgRAG then assesses the reliability of the LLM outputs
+to detect its potential hallucinations, preventing error propagation in multi-hop reasoning, which is called “Uncertainty
+Quantification”.
+ProgRAG measures the aleatoric uncertainty (AU) of the
+LLM outputs by applying evidential modeling (Sensoy, Kaplan, and Kandemir 2018; Ma et al. 2025) to the top-K logits at the generation step in which the LLM produces the
+first token of the answer entity. If the uncertainty exceeds a
+predefined threshold, indicating low model confidence, the
+response is refined with the top-l triples from Tre (qi ) as external evidence. Otherwise, the response is accepted as is. If
+qi is the final sub-question, the model proceeds to the subsequent stage; otherwise, it continues to the next sub-question
+qi+1 .
+
+Prefix Enumeration and Repacking
+In the final stage, the LLM infers the answer to the question q based on all reasoning paths explored thus far. To
+enhance its reasoning ability, we enumerate all prefixes of
+every reasoning path, which are then included in the LLM
+context, as shown in Stage 3 of Figure 3. Next, we rank the
+prefixes by their semantic relevance to q, as scored by the
+3
+If the LLM identifies plausible answers in Tre (qi ), it then outputs them; otherwise, it returns “None”, indicating insufficient evidence. In such cases, ProgRAG returns to the relation pruning step
+with the unused relations in Rre (qi ) \ Rpr (qi ) to explore alternative paths, thereby enabling early termination of incorrect reasoning and reducing redundant inference.
+
+Experiments
+
+Experimental Setup
+We adopt three publicly available multi-hop KGQA
+datasets: WebQuestionsSP (WebQSP) (Yih et al. 2016),
+ComplexWebQuestions (CWQ) (Talmor and Berant 2018),
+and CR-LT-KGQA (Guo, Toroghi, and Sanner 2024).
+Dataset statistics and details are provided in Appendix A.
+As per prior works (Sun et al. 2023; Chen et al. 2024), we
+use exact match accuracy (Hit@1) as our primary evaluation
+metric. We use two small-scale LLMs for reasoning, i.e.,
+Gemma 2-9b-it and GPT-4o-mini. Since black-box LLMs
+like GPT-4o-mini do not provide access to their logits, uncertainty quantification is only applied when using Gemma
+2-9b, which is the main LLM for most experiments. Other
+implementation details are further documented in the Appendix B.
+
+Baseline Methods
+We evaluate the performance of ProgRAG against a diverse
+set of baselines spanning four major categories: (a) LLMonly prompting methods (Brown et al. 2020; Wei et al. 2022;
+Wang et al. 2022); (b) Fine-tuned LLM-based methods (Luo
+et al. 2023b; Liu et al. 2025a; Yu et al. 2022; Ao et al. 2025);
+(c) LLM-as-retriever methods (Sun et al. 2023; Chen et al.
+2024; Jiang et al. 2023a; Wang et al. 2025; Zhang et al. 2025;
+Liang and Gu 2025); (d) External retriever-based methods
+(Zhao et al. 2024; Li, Miao, and Li 2024).4
+
+RQ1: Main Results
+As shown in Table 1 and Table 2, ProgRAG outperforms
+all baselines on WebQSP, CWQ, and CR-LT. Even without fine-tuning, ProgRAG with Gemma2-9b surpasses finetuned LLMs, outperforming RoG by 2.8% on WebQSP and
+11.1% on CWQ. Compared to LLM-as-retriever methods,
+4
+We do not extensively compare with fine-tuning-based
+(Mavromatis and Karypis 2024) or semantic parsing approaches
+(Luo et al. 2023a; Xu et al. 2025), as they follow fundamentally
+different paradigms from our retrieval-augmented setting.
+
+

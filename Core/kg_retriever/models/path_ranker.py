@@ -14,7 +14,20 @@ Architecture:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
+try:
+    import pytorch_lightning as pl
+except ImportError:
+    class _LightningModule(nn.Module):
+        def save_hyperparameters(self, *args, **kwargs):
+            pass
+
+        def log(self, *args, **kwargs):
+            pass
+
+    class _PL:
+        LightningModule = _LightningModule
+
+    pl = _PL()
 from transformers import AutoModel, AutoTokenizer
 from typing import Dict, Optional, Tuple, List, Any
 import math

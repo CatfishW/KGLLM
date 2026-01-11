@@ -14,7 +14,15 @@ import random
 import ast
 from pathlib import Path
 from transformers import AutoTokenizer
-import pytorch_lightning as pl
+try:
+    import pytorch_lightning as pl
+except ImportError:
+    pl = None
+
+if pl is None:
+    _LightningDataModule = object
+else:
+    _LightningDataModule = pl.LightningDataModule
 
 
 class PathRankerDataset(Dataset):
@@ -222,7 +230,7 @@ def collate_fn(batch: List[Dict]) -> Dict[str, torch.Tensor]:
     }
 
 
-class PathRankerDataModule(pl.LightningDataModule):
+class PathRankerDataModule(_LightningDataModule):
     """PyTorch Lightning data module for Path Ranker."""
     
     def __init__(
